@@ -46,9 +46,10 @@ class ConvBPDNSlice(admm.ADMM):
         })
 
         def __init__(self, opt=None):
+            super().__init__({'BPDN': bpdn.BPDN.Options()})
             if opt is None:
                 opt = {}
-            super().__init__(opt)
+            self.update(opt)
 
     # follows exactly as cbpdn.ConvBPDN for actual comparison
     itstat_fields_objfn = ('ObjFun', 'DFid', 'RegL1')
