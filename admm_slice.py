@@ -36,13 +36,22 @@ class ConvBPDNSlice(admm.ADMM):
         Options include all fields of :class:`admm.cbpdn.ConvBPDN`,
         with `BPDN` from :class:`admm.bpdn.BPDN`.
         """
-        defaults = copy.deepcopy(cbpdn.ConvBPDN.Options.defaults)
+        defaults = copy.deepcopy(admm.ADMM.Options.defaults)
         defaults.update({
-            'BPDN': copy.deepcopy(bpdn.BPDN.Options.defaults)
+            'BPDN': copy.deepcopy(bpdn.BPDN.Options.defaults),
+            'RelaxParam': 1.8,
         })
         defaults['BPDN'].update({
-            'MaxMainIter': 1,
+            'MaxMainIter': 1000,
             'Verbose': False,
+        })
+        defaults['AutoRho'].update({
+            'Enabled': True,
+            'AutoScaling': True,
+            'Period': 1,
+            'Scaling': 1000.,  # tau
+            'RsdlRatio': 1.2,  # mu
+            'RsdlTarget': None,  # xi, initial value depends on lambda
         })
 
         def __init__(self, opt=None):
@@ -62,19 +71,21 @@ class ConvBPDNSlice(admm.ADMM):
 
         Internal Parameters
         -------------------
-        X: [m, K, N]
+        X: [K, m, N]
           Convolutional representation of the input signal. m is the size
           of atom in a dictionary, K is the batch size of input signals,
           and N is the number of slices extracted from each signal (usually
           number of pixels in an image).
-        Y: [n, K, N]
-          Splitted variable with contraint :math:`y_i=D_l x_i`. n represents
-          the size of each slice.
-        U: [n, K, N]
+        Y: [K, n, N]
+          Splitted variable with contraint :math:`-D_l x_i + y_i = 0`.
+          n represents the size of each slice.
+        U: [K, n, N]
           Dual variable with the same size as Y.
         """
         if opt is None:
             opt = ConvBPDNSlice.Options()
+        # Set dtype attribute based on S.dtype and opt['DataType']
+        self.set_dtype(opt, S.dtype)
         if not hasattr(self, 'cri'):
             self.cri = cr.CSC_ConvRepIndexing(D, S, dimK=dimK, dimN=dimN)
         # Number of elements of sparse representation x is invariant to
@@ -85,50 +96,54 @@ class ConvBPDNSlice(admm.ADMM):
         # Externally the input signal should have a data layout as
         # S(N0, N1, ..., C, K).
         # First convert to common pytorch Variable layout.
+        # [H, W, C, K, 1] -> [K, C, H, W]
         self.S = np.asarray(S.reshape(self.cri.shpS), dtype=S.dtype)
         self.S = self.S.squeeze(-1).transpose((3, 2, 0, 1))
-        # (N, K)
+        # [K, n, N]
         self.S_slice = self.im2slices(self.S)
+        self.lmbda = lmbda
+        # Set penalty parameter if not set
+        self.set_attr('rho', opt['rho'], dval=(50.0*self.lmbda + 1.0),
+                      dtype=self.dtype)
+        # Set xi if not set
+        self.set_attr('tau_xi', opt['AutoRho', 'RsdlTarget'],
+                      dval=(1.0+18.3**(np.log10(self.lmbda)+1.0)),
+                      dtype=self.dtype)
         super().__init__(Nx, self.S_slice.shape, self.S_slice.shape,
                          S.dtype, opt)
-        self.lmbda = lmbda
 
     def im2slices(self, S):
         r"""Convert the input signal :math:`S` to a slice form.
         Assuming the input signal having a standard shape as pytorch variable
         (N, C, H, W).  The output slices have shape
-        (slice_dim, batch_size, num_slices_per_batch).
+        (batch_size, slice_dim, num_slices_per_batch).
         """
-        # NOTE: we use zero-padding as boundary condition for now.
-        # Handling boundary condition remains a critical work.
-        # TODO(leoyolo): Gurantee that F.unfold and F.fold with zero padding
-        # behaves as expected, by writing some tests.
         # TODO(leoyolo): Handle different boundary condition.
-        S_torch = torch.from_numpy(S)
+        # NOTE: we simulate the boundary condition outside fold and unfold.
         kernel_size = self.cri.shpD[:2]
-        pad_h, pad_w = kernel_size[0]//2, kernel_size[1]//2
+        pad_h, pad_w = kernel_size[0] - 1, kernel_size[1] - 1
+        S_torch = np.pad(S, ((0, 0), (0, 0), (0, pad_h), (0, pad_w)), 'constant')
         with torch.no_grad():
-            slices = F.unfold(S_torch, kernel_size=kernel_size,
-                              padding=(pad_h, pad_w))
+            S_torch = torch.from_numpy(S_torch)
+            slices = F.unfold(S_torch, kernel_size=kernel_size)
         assert slices.size(1) == self.D.shape[0]
-        slices = slices.permute(1, 0, 2).numpy()
-        return slices
+        return slices.numpy()
 
     def slices2im(self, slices):
         r"""Reconstruct input signal :math:`\hat{S}` for slices.
         The input slices should have compatible size of
-        (slice_dim, batch_size, num_slices_per_batch), and the
+        (batch_size, slice_dim, num_slices_per_batch), and the
         returned signal has shape (N, C, H, W) as standard pytorch variable.
         """
-        output_size = self.cri.shpS[:2]
         kernel_size = self.cri.shpD[:2]
-        pad_h, pad_w = kernel_size[0]//2, kernel_size[1]//2
-        slices_torch = torch.from_numpy(slices)
-        slices_torch = slices_torch.permute(1, 0, 2)
+        pad_h, pad_w = kernel_size[0] - 1, kernel_size[1] - 1
+        output_h, output_w = self.cri.shpS[:2]
         with torch.no_grad():
+            slices_torch = torch.from_numpy(slices)
             S_recon = F.fold(
-                slices_torch, output_size, kernel_size, padding=(pad_h, pad_w)
-            ).numpy()
+                slices_torch, (output_h+pad_h, output_w+pad_w), kernel_size
+            )
+        S_recon = S_recon.numpy()[:, :, :output_h, :output_w]
         return S_recon
 
     def xstep(self):
@@ -144,12 +159,15 @@ class ConvBPDNSlice(admm.ADMM):
         # TODO(leoyolo): The naive method here is to apply BPDN once and
         # destroy the object.
         signal = self.Y + self.U
+        signal = signal.transpose((1, 0, 2))
+        # [K, n, N] -> [n, K, N] -> [n, K*N]
         signal = signal.reshape(signal.shape[0], -1)
         solver = bpdn.BPDN(self.D, signal, lmbda=self.lmbda/self.rho,
                            opt=self.opt['BPDN'])
         self.X = solver.solve()
-        self.X = self.X.reshape(self.X.shape[0], self.Y.shape[1],
-                                self.Y.shape[2])
+        self.X = self.X.reshape(
+            self.X.shape[0], self.Y.shape[0], self.Y.shape[2]
+        ).transpose((1, 0, 2))
 
     def ystep(self):
         r"""Minimize with respect to :math:`y`.  This has the form:
@@ -168,9 +186,10 @@ class ConvBPDNSlice(admm.ADMM):
             y_i = p_i - \frac{1}{\rho+n}\mathbf{R}_i\hat{s}.
 
         """
-        p = self.S_slice / self.rho + self.AX - self.U
+        # Notice that AX = -D*X.
+        p = self.S_slice / self.rho - self.AX - self.U
         recon = self.slices2im(p)
-        self.Y = p - self.im2slices(recon) / (p.shape[0] + self.rho)
+        self.Y = p - self.im2slices(recon) / (p.shape[1] + self.rho)
 
     def cnst_A(self, X):
         r"""Compute :math:`Ax`. Our constraint is
@@ -208,14 +227,14 @@ class ConvBPDNSlice(admm.ADMM):
         """Slices are initialized using signal slices."""
         _ = yshape
         y_init = self.S_slice.copy()
-        y_init /= y_init.shape[0]
+        y_init /= y_init.shape[1]
         return y_init
 
     def getmin(self):
         """Reimplement getmin func to have unified output layout."""
-        # (m, K, N)
+        # [K, m, N] -> [N, K, m] -> [H, W, 1, K, m]
         minimizer = self.X.copy()
-        minimizer = minimizer.transpose((2, 1, 0))
+        minimizer = minimizer.transpose((2, 0, 1))
         minimizer = minimizer.reshape(self.cri.shpX)
         return minimizer
 
@@ -230,7 +249,9 @@ class ConvBPDNSlice(admm.ADMM):
         r"""Data fidelity term of the objective :math:`(1/2) \|s - \sum_i
         \mathbf{R}_i^T y_i\|_2^2`.
         """
-        recon = self.slices2im(np.matmul(self.D, self.X))
+        # notice AX = -D*X
+        # use non-relaxed version to represent data fidelity term
+        recon = self.slices2im(-self.AXnr)
         return ((recon - self.S) ** 2).sum() / 2.0
 
     def obfn_reg(self):
@@ -251,8 +272,25 @@ class ConvBPDNSlice(admm.ADMM):
             # single channel coefficient array, first convert to
             # (num_atoms, batch_size, ...) and then to
             # (slice_dim, batch_size, num_slices_per_batch) by multiplying D.
-            X = self.X.transpose((4, 3, 0, 1, 2))
+            # [ H, W, 1, K, m ] -> [K, m, H, W, 1] -> [K, m, N]
+            X = X.transpose((3, 4, 0, 1, 2))
             X = X.reshape(X.shape[0], X.shape[1], -1)
         recon = self.slices2im(np.matmul(self.D, X))
+        # [K, C, H, W] -> [H, W, C, K, 1]
         recon = np.expand_dims(recon.transpose((2, 3, 1, 0)), axis=-1)
         return recon
+
+    def update_rho(self, k, r, s):
+        """Back to usual way of updating rho."""
+        if self.opt['AutoRho', 'AutoScaling']:
+            # If AutoScaling is enabled, use adaptive penalty parameters by
+            # residual balancing as commonly used in SPORCO.
+            super().update_rho(k, r, s)
+        else:
+            tau = self.rho_tau
+            mu = self.rho_mu
+            if k != 0 and ((k+1) % self.opt['AutoRho', 'Period'] == 0):
+                if r > mu * s:
+                    self.rho = tau * self.rho
+                elif s > mu * r:
+                    self.rho = self.rho / tau
