@@ -162,9 +162,11 @@ class ConvBPDNSlice(admm.ADMM):
         signal = signal.transpose((1, 0, 2))
         # [K, n, N] -> [n, K, N] -> [n, K*N]
         signal = signal.reshape(signal.shape[0], -1)
-        solver = bpdn.BPDN(self.D, signal, lmbda=self.lmbda/self.rho,
-                           opt=self.opt['BPDN'])
+        opt = copy.deepcopy(self.opt['BPDN'])
+        opt['Y0'] = getattr(self, '_X_bpdn_cache', None)
+        solver = bpdn.BPDN(self.D, signal, lmbda=self.lmbda/self.rho, opt=opt)
         self.X = solver.solve()
+        self._X_bpdn_cache = copy.deepcopy(self.X)
         self.X = self.X.reshape(
             self.X.shape[0], self.Y.shape[0], self.Y.shape[2]
         ).transpose((1, 0, 2))
