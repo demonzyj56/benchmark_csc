@@ -14,6 +14,58 @@ from sporco.util import u
 logger = logging.getLogger(__name__)
 
 
+def _pad_circulant_front(blob, pad_h, pad_w):
+    """Pad a 4-D blob with circulant boundary condition at the front."""
+    return np.pad(blob, ((0, 0), (0, 0), (pad_h, 0), (pad_w, 0)), 'wrap')
+
+
+def _pad_circulant_back(blob, pad_h, pad_w):
+    """Pad a 4-D blob with circulant boundary condition at the back."""
+    return np.pad(blob, ((0, 0), (0, 0), (0, pad_h), (0, pad_w)), 'wrap')
+
+
+def _pad_zeros_front(blob, pad_h, pad_w):
+    """Pad a 4-D blob with zero boundary condition at the front."""
+    return np.pad(blob, ((0, 0), (0, 0), (pad_h, 0), (pad_w, 0)), 'constant')
+
+
+def _pad_zeros_back(blob, pad_h, pad_w):
+    """Pad a 4-D blob with zero boundary condition at the back."""
+    return np.pad(blob, ((0, 0), (0, 0), (0, pad_h), (0, pad_w)), 'constant')
+
+
+def _crop_circulant_front(blob, pad_h, pad_w):
+    """Crop a 4-D blob which is reconstructed for circulant boundary condition
+    at the front."""
+    cropped = blob[:, :, pad_h:, pad_w:]
+    cropped[:, :, -pad_h:, :] += blob[:, :, :pad_h, pad_w:]
+    cropped[:, :, :, -pad_w:] += blob[:, :, pad_h:, :pad_w]
+    cropped[:, :, -pad_h:, -pad_w:] += blob[:, :, :pad_h, :pad_w]
+    return cropped
+
+
+def _crop_circulant_back(blob, pad_h, pad_w):
+    """Crop a 4-D blob which is reconstructed for circulant boundary condition
+    at the back."""
+    cropped = blob[:, :, :-pad_h, :-pad_w]
+    cropped[:, :, :pad_h, :] += blob[:, :, -pad_h:, :-pad_w]
+    cropped[:, :, :, :pad_w] += blob[:, :, :-pad_h, -pad_w:]
+    cropped[:, :, :pad_h, :pad_w] += blob[:, :, -pad_h:, -pad_w:]
+    return cropped
+
+
+def _crop_zeros_front(blob, pad_h, pad_w):
+    """Crop a 4-D blob which is reconstructed for zero boundary condition
+    at the front."""
+    return blob[:, :, pad_h:, pad_w:]
+
+
+def _crop_zeros_back(blob, pad_h, pad_w):
+    """Crop a 4-D blob which is reconstructed for zero boundary condition
+    at the back."""
+    return blob[:, :, :-pad_h, :-pad_w]
+
+
 class ConvBPDNSliceTwoBlockCnstrnt(admm.ADMMTwoBlockCnstrnt):
 
     class Options(admm.ADMMTwoBlockCnstrnt.Options):
@@ -301,7 +353,7 @@ class ConvBPDNSlice(admm.ADMM):
         super().__init__(Nx, self.S_slice.shape, self.S_slice.shape,
                          S.dtype, opt)
 
-    def im2slices(self, S):
+    def im2slices(self, S, boundary='circulant_back'):
         r"""Convert the input signal :math:`S` to a slice form.
         Assuming the input signal having a standard shape as pytorch variable
         (N, C, H, W).  The output slices have shape
@@ -311,14 +363,15 @@ class ConvBPDNSlice(admm.ADMM):
         # NOTE: we simulate the boundary condition outside fold and unfold.
         kernel_size = self.cri.shpD[:2]
         pad_h, pad_w = kernel_size[0] - 1, kernel_size[1] - 1
-        S_torch = np.pad(S, ((0, 0), (0, 0), (0, pad_h), (0, pad_w)), 'constant')
+        #  S_torch = np.pad(S, ((0, 0), (0, 0), (0, pad_h), (0, pad_w)), 'constant')
+        S_torch = globals()['_pad_{}'.format(boundary)](S, pad_h, pad_w)
         with torch.no_grad():
             S_torch = torch.from_numpy(S_torch)
             slices = F.unfold(S_torch, kernel_size=kernel_size)
         assert slices.size(1) == self.D.shape[0]
         return slices.numpy()
 
-    def slices2im(self, slices):
+    def slices2im(self, slices, boundary='circulant_back'):
         r"""Reconstruct input signal :math:`\hat{S}` for slices.
         The input slices should have compatible size of
         (batch_size, slice_dim, num_slices_per_batch), and the
@@ -332,7 +385,9 @@ class ConvBPDNSlice(admm.ADMM):
             S_recon = F.fold(
                 slices_torch, (output_h+pad_h, output_w+pad_w), kernel_size
             )
-        S_recon = S_recon.numpy()[:, :, :output_h, :output_w]
+        #  S_recon = S_recon.numpy()[:, :, :output_h, :output_w]
+        S_recon = globals()['_crop_{}'.format(boundary)](S_recon.numpy(),
+                                                         pad_h, pad_w)
         return S_recon
 
     def xstep(self):
