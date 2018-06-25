@@ -266,7 +266,7 @@ class ConvBPDNSlice(admm.ADMM):
           and N is the number of slices extracted from each signal (usually
           number of pixels in an image).
         Y: [K, n, N]
-          Splitted variable with contraint :math:`-D_l x_i + y_i = 0`.
+          Splitted variable with contraint :math:`D_l x_i - y_i = 0`.
           n represents the size of each slice.
         U: [K, n, N]
           Dual variable with the same size as Y.
@@ -339,15 +339,15 @@ class ConvBPDNSlice(admm.ADMM):
         r"""Minimize with respect to :math:`x`.  This has the form:
 
         .. math::
-            f(x)=\sum_i\left(\lambda\|x_i\|_1+\frac{\rho}{2}\|y_i
-            - D_l x_i + u_i\|_2^2\right).
+            f(x)=\sum_i\left(\lambda\|x_i\|_1+\frac{\rho}{2}\|D_l x_i - y_i
+            + u_i\|_2^2\right).
 
         This could be solved in parallel over all slice indices i and all
         batch indices k (implicit in the above form).
         """
         # TODO(leoyolo): The naive method here is to apply BPDN once and
         # destroy the object.
-        signal = self.Y + self.U
+        signal = self.Y - self.U
         signal = signal.transpose((1, 0, 2))
         # [K, n, N] -> [n, K, N] -> [n, K*N]
         signal = signal.reshape(signal.shape[0], -1)
@@ -365,20 +365,20 @@ class ConvBPDNSlice(admm.ADMM):
 
         .. math::
             g(y)=\frac{1}{2}\|s-\sum_i\mathbf{R}_i^T y_i\|_2^2+
-            \frac{\rho}{2}\sum_i\|y_i-D_l x_i + u_i\|_2^2.
+            \frac{\rho}{2}\sum_i\|D_l x_i - y_i + u_i\|_2^2.
 
         This has a very nice solution
 
         .. math::
-            p_i=\frac{1}{\rho}\mathbf{R}_i s + D_l x_i - u_i.
+            p_i=\frac{1}{\rho}\mathbf{R}_i s + D_l x_i + u_i.
         .. math::
             \hat{s}=\sum_i \mathbf{R}_i^T p_i.
         .. math::
             y_i = p_i - \frac{1}{\rho+n}\mathbf{R}_i\hat{s}.
 
         """
-        # Notice that AX = -D*X.
-        p = self.S_slice / self.rho - self.AX - self.U
+        # Notice that AX = D*X.
+        p = self.S_slice / self.rho + self.AX + self.U
         recon = self.slices2im(p)
         self.Y = p - self.im2slices(recon) / (p.shape[1] + self.rho)
 
@@ -386,31 +386,31 @@ class ConvBPDNSlice(admm.ADMM):
         r"""Compute :math:`Ax`. Our constraint is
 
         ..math::
-            y_i - D_l x_i = 0
+            D_l x_i - y_i = 0
         """
-        return -np.matmul(self.D, X)
+        return np.matmul(self.D, X)
 
     def cnst_AT(self, X):
         r"""Compute :math:`A^T x`. Our constraint is
 
         ..math::
-            y_i - D_l x_i = 0
+            D_l x_i - y_i = 0
         """
-        return -np.matmul(self.D.transpose(), X)
+        return np.matmul(self.D.transpose(), X)
 
     def cnst_B(self, Y):
         r""" Compute :math:`By`.  Our constraint is
 
         ..math::
-            y_i - D_l x_i = 0
+            D_l x_i - y_i = 0
         """
-        return Y
+        return -Y
 
     def cnst_c(self):
         r""" Compute :math:`c`.  Our constraint is
 
         ..math::
-            y_i - D_l x_i = 0
+            D_l x_i - y_i = 0
         """
         return 0.
 
@@ -440,9 +440,9 @@ class ConvBPDNSlice(admm.ADMM):
         r"""Data fidelity term of the objective :math:`(1/2) \|s - \sum_i
         \mathbf{R}_i^T y_i\|_2^2`.
         """
-        # notice AX = -D*X
+        # notice AX = D*X
         # use non-relaxed version to represent data fidelity term
-        recon = self.slices2im(-self.AXnr)
+        recon = self.slices2im(self.cnst_A(self.X))
         return ((recon - self.S) ** 2).sum() / 2.0
 
     def obfn_reg(self):
