@@ -74,6 +74,7 @@ class ConvBPDNSliceTwoBlockCnstrnt(admm.ADMMTwoBlockCnstrnt):
         defaults.update({
             'RelaxParam': 1.8,
             'AuxVarObj': False,
+            'Boundary': 'circulant_back',
         })
         defaults['AutoRho'].update({
             'Enabled': True,
@@ -103,6 +104,7 @@ class ConvBPDNSliceTwoBlockCnstrnt(admm.ADMMTwoBlockCnstrnt):
         if not hasattr(self, 'cri'):
             self.cri = cr.CSC_ConvRepIndexing(D, S, dimK=dimK, dimN=dimN)
         self.setdict(D)
+        self.boundary = opt['Boundary']
         # Number of elements of sparse representation x is invariant to
         # slice/FFT solvers.
         Nx = np.product(self.cri.shpX)
@@ -139,11 +141,11 @@ class ConvBPDNSliceTwoBlockCnstrnt(admm.ADMMTwoBlockCnstrnt):
         (N, C, H, W).  The output slices have shape
         (batch_size, slice_dim, num_slices_per_batch).
         """
-        # TODO(leoyolo): Handle different boundary condition.
-        # NOTE: we simulate the boundary condition outside fold and unfold.
         kernel_size = self.cri.shpD[:2]
         pad_h, pad_w = kernel_size[0] - 1, kernel_size[1] - 1
-        S_torch = np.pad(S, ((0, 0), (0, 0), (0, pad_h), (0, pad_w)), 'constant')
+        S_torch = globals()['_pad_{}'.format(self.boundary)](
+            S, pad_h, pad_w
+        )
         with torch.no_grad():
             S_torch = torch.from_numpy(S_torch)
             slices = F.unfold(S_torch, kernel_size=kernel_size)
@@ -164,7 +166,9 @@ class ConvBPDNSliceTwoBlockCnstrnt(admm.ADMMTwoBlockCnstrnt):
             S_recon = F.fold(
                 slices_torch, (output_h+pad_h, output_w+pad_w), kernel_size
             )
-        S_recon = S_recon.numpy()[:, :, :output_h, :output_w]
+        S_recon = globals()['_crop_{}'.format(self.boundary)](
+            S_recon.numpy(), pad_h, pad_w
+        )
         return S_recon
 
     def xstep(self):
