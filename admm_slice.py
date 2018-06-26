@@ -286,6 +286,7 @@ class ConvBPDNSlice(admm.ADMM):
         defaults.update({
             'BPDN': copy.deepcopy(bpdn.BPDN.Options.defaults),
             'RelaxParam': 1.8,
+            'Boundary': 'circulant_back',
         })
         defaults['BPDN'].update({
             'MaxMainIter': 1000,
@@ -339,6 +340,7 @@ class ConvBPDNSlice(admm.ADMM):
         self.set_dtype(opt, S.dtype)
         if not hasattr(self, 'cri'):
             self.cri = cr.CSC_ConvRepIndexing(D, S, dimK=dimK, dimN=dimN)
+        self.boundary = opt['Boundary']
         # Number of elements of sparse representation x is invariant to
         # slice/FFT solvers.
         Nx = np.product(self.cri.shpX)
@@ -364,24 +366,23 @@ class ConvBPDNSlice(admm.ADMM):
                          S.dtype, opt)
         self.extra_timer = su.Timer(['xstep', 'ystep'])
 
-    def im2slices(self, S, boundary='circulant_back'):
+    def im2slices(self, S):
         r"""Convert the input signal :math:`S` to a slice form.
         Assuming the input signal having a standard shape as pytorch variable
         (N, C, H, W).  The output slices have shape
         (batch_size, slice_dim, num_slices_per_batch).
         """
-        # TODO(leoyolo): Handle different boundary condition.
         # NOTE: we simulate the boundary condition outside fold and unfold.
         kernel_size = self.cri.shpD[:2]
         pad_h, pad_w = kernel_size[0] - 1, kernel_size[1] - 1
-        S_torch = globals()['_pad_{}'.format(boundary)](S, pad_h, pad_w)
+        S_torch = globals()['_pad_{}'.format(self.boundary)](S, pad_h, pad_w)
         with torch.no_grad():
             S_torch = torch.from_numpy(S_torch)
             slices = F.unfold(S_torch, kernel_size=kernel_size)
         assert slices.size(1) == self.D.shape[0]
         return slices.numpy()
 
-    def slices2im(self, slices, boundary='circulant_back'):
+    def slices2im(self, slices):
         r"""Reconstruct input signal :math:`\hat{S}` for slices.
         The input slices should have compatible size of
         (batch_size, slice_dim, num_slices_per_batch), and the
@@ -395,8 +396,9 @@ class ConvBPDNSlice(admm.ADMM):
             S_recon = F.fold(
                 slices_torch, (output_h+pad_h, output_w+pad_w), kernel_size
             )
-        S_recon = globals()['_crop_{}'.format(boundary)](S_recon.numpy(),
-                                                         pad_h, pad_w)
+        S_recon = globals()['_crop_{}'.format(self.boundary)](
+            S_recon.numpy(), pad_h, pad_w
+        )
         return S_recon
 
     def xstep(self):
