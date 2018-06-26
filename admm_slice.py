@@ -9,6 +9,7 @@ import torch.nn.functional as F
 from sporco.admm import admm, bpdn, cbpdn
 import sporco.cnvrep as cr
 import sporco.linalg as sl
+import sporco.util as su
 from sporco.util import u
 
 logger = logging.getLogger(__name__)
@@ -303,8 +304,13 @@ class ConvBPDNSlice(admm.ADMM):
 
     # follows exactly as cbpdn.ConvBPDN for actual comparison
     itstat_fields_objfn = ('ObjFun', 'DFid', 'RegL1')
-    hdrtxt_objfn = ('Fnc', 'DFid', u('Regℓ1'))
-    hdrval_objfun = {'Fnc': 'ObjFun', 'DFid': 'DFid', u('Regℓ1'): 'RegL1'}
+    hdrtxt_objfn = ('Fnc', 'DFid', u('Regℓ1'), 'XStepAvg', 'YStepAvg')
+    hdrval_objfun = {'Fnc': 'ObjFun', 'DFid': 'DFid', u('Regℓ1'): 'RegL1',
+                     'XStepAvg': 'XStepTime', 'YStepAvg': 'YStepTime'}
+    # timer for xstep/ystep
+    # NOTE: You can't use Timer to measure each tic time.  Record average
+    # time instead.
+    itstat_fields_extra = ('XStepTime', 'YStepTime')
 
     def __init__(self, D, S, lmbda=None, opt=None, dimK=None, dimN=2):
         r"""We use the same layout as ConvBPDN as input and output, but for
@@ -352,6 +358,7 @@ class ConvBPDNSlice(admm.ADMM):
                       dtype=self.dtype)
         super().__init__(Nx, self.S_slice.shape, self.S_slice.shape,
                          S.dtype, opt)
+        self.extra_timer = su.Timer(['xstep', 'ystep'])
 
     def im2slices(self, S, boundary='circulant_back'):
         r"""Convert the input signal :math:`S` to a slice form.
@@ -363,7 +370,6 @@ class ConvBPDNSlice(admm.ADMM):
         # NOTE: we simulate the boundary condition outside fold and unfold.
         kernel_size = self.cri.shpD[:2]
         pad_h, pad_w = kernel_size[0] - 1, kernel_size[1] - 1
-        #  S_torch = np.pad(S, ((0, 0), (0, 0), (0, pad_h), (0, pad_w)), 'constant')
         S_torch = globals()['_pad_{}'.format(boundary)](S, pad_h, pad_w)
         with torch.no_grad():
             S_torch = torch.from_numpy(S_torch)
@@ -385,7 +391,6 @@ class ConvBPDNSlice(admm.ADMM):
             S_recon = F.fold(
                 slices_torch, (output_h+pad_h, output_w+pad_w), kernel_size
             )
-        #  S_recon = S_recon.numpy()[:, :, :output_h, :output_w]
         S_recon = globals()['_crop_{}'.format(boundary)](S_recon.numpy(),
                                                          pad_h, pad_w)
         return S_recon
@@ -400,6 +405,7 @@ class ConvBPDNSlice(admm.ADMM):
         This could be solved in parallel over all slice indices i and all
         batch indices k (implicit in the above form).
         """
+        self.extra_timer.start('xstep')
         # TODO(leoyolo): The naive method here is to apply BPDN once and
         # destroy the object.
         signal = self.Y - self.U
@@ -414,6 +420,7 @@ class ConvBPDNSlice(admm.ADMM):
         self.X = self.X.reshape(
             self.X.shape[0], self.Y.shape[0], self.Y.shape[2]
         ).transpose((1, 0, 2))
+        self.extra_timer.stop('xstep')
 
     def ystep(self):
         r"""Minimize with respect to :math:`y`.  This has the form:
@@ -432,10 +439,12 @@ class ConvBPDNSlice(admm.ADMM):
             y_i = p_i - \frac{1}{\rho+n}\mathbf{R}_i\hat{s}.
 
         """
+        self.extra_timer.start('ystep')
         # Notice that AX = D*X.
         p = self.S_slice / self.rho + self.AX + self.U
         recon = self.slices2im(p)
         self.Y = p - self.im2slices(recon) / (p.shape[1] + self.rho)
+        self.extra_timer.stop('ystep')
 
     def cnst_A(self, X):
         r"""Compute :math:`Ax`. Our constraint is
@@ -540,3 +549,10 @@ class ConvBPDNSlice(admm.ADMM):
                     self.rho = tau * self.rho
                 elif s > mu * r:
                     self.rho = self.rho / tau
+
+    def itstat_extra(self):
+        """Get xstep/ystep solve time. Return average time."""
+        niters = self.k + 1
+        xstep_elapsed = self.extra_timer.elapsed('xstep')
+        ystep_elapsed = self.extra_timer.elapsed('ystep')
+        return (xstep_elapsed/niters, ystep_elapsed/niters)
