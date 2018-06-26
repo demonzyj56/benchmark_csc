@@ -75,6 +75,7 @@ class ConvBPDNSliceTwoBlockCnstrnt(admm.ADMMTwoBlockCnstrnt):
             'RelaxParam': 1.8,
             'AuxVarObj': False,
             'Boundary': 'circulant_back',
+            'RhoRatio': 1.,
         })
         defaults['AutoRho'].update({
             'Enabled': True,
@@ -92,9 +93,15 @@ class ConvBPDNSliceTwoBlockCnstrnt(admm.ADMMTwoBlockCnstrnt):
 
     # Although we split the variables in a different way, we record
     # the same objection function for comparison
+    # follows exactly as cbpdn.ConvBPDN for actual comparison
     itstat_fields_objfn = ('ObjFun', 'DFid', 'RegL1')
-    hdrtxt_objfn = ('Fnc', 'DFid', u('Regℓ1'))
-    hdrval_objfun = {'Fnc': 'ObjFun', 'DFid': 'DFid', u('Regℓ1'): 'RegL1'}
+    hdrtxt_objfn = ('Fnc', 'DFid', u('Regℓ1'), 'XStepAvg', 'YStepAvg')
+    hdrval_objfun = {'Fnc': 'ObjFun', 'DFid': 'DFid', u('Regℓ1'): 'RegL1',
+                     'XStepAvg': 'XStepTime', 'YStepAvg': 'YStepTime'}
+    # timer for xstep/ystep
+    # NOTE: You can't use Timer to measure each tic time.  Record average
+    # time instead.
+    itstat_fields_extra = ('XStepTime', 'YStepTime')
 
     def __init__(self, D, S, lmbda=None, opt=None, dimK=None, dimN=2):
         if opt is None:
@@ -103,8 +110,20 @@ class ConvBPDNSliceTwoBlockCnstrnt(admm.ADMMTwoBlockCnstrnt):
         self.set_dtype(opt, S.dtype)
         if not hasattr(self, 'cri'):
             self.cri = cr.CSC_ConvRepIndexing(D, S, dimK=dimK, dimN=dimN)
+        self.lmbda = self.dtype.type(lmbda)
+        # Set penalty parameter if not set
+        self.set_attr('rho', opt['rho'], dval=(50.0*self.lmbda + 1.0),
+                      dtype=self.dtype)
+        # Set xi if not set
+        self.set_attr('tau_xi', opt['AutoRho', 'RsdlTarget'],
+                      dval=(1.0+18.3**(np.log10(self.lmbda)+1.0)),
+                      dtype=self.dtype)
+        # set boundary condition
+        self.set_attr('boundary', opt['Boundary'], dval='circulant_back',
+                      dtype=None)
+        # set rho ratio between two constraints
+        self.set_attr('rho_ratio', opt['RhoRatio'], dval=0.5, dtype=self.dtype)
         self.setdict(D)
-        self.boundary = opt['Boundary']
         # Number of elements of sparse representation x is invariant to
         # slice/FFT solvers.
         Nx = np.product(self.cri.shpX)
@@ -116,23 +135,16 @@ class ConvBPDNSliceTwoBlockCnstrnt(admm.ADMMTwoBlockCnstrnt):
         self.S = self.S.squeeze(-1).transpose((3, 2, 0, 1))
         # [K, n, N]
         self.S_slice = self.im2slices(self.S)
-        self.lmbda = lmbda
-        # Set penalty parameter if not set
-        self.set_attr('rho', opt['rho'], dval=(50.0*self.lmbda + 1.0),
-                      dtype=self.dtype)
-        # Set xi if not set
-        self.set_attr('tau_xi', opt['AutoRho', 'RsdlTarget'],
-                      dval=(1.0+18.3**(np.log10(self.lmbda)+1.0)),
-                      dtype=self.dtype)
         yshape = list(self.S_slice.shape)
         yshape[1] = self.D.shape[0] + self.D.shape[1]  # n+m
         super().__init__(Nx, yshape, 1, self.D.shape[0], S.dtype, opt)
+        self.extra_timer = su.Timer(['xstep', 'ystep'])
 
     def setdict(self, D):
         """Set dictionary properly."""
         self.D = D.reshape(-1, D.shape[-1])
         self.inv = np.linalg.inv(
-            self.D.T.dot(self.D)+np.identity(self.D.shape[1])
+            self.D.T.dot(self.D)+np.identity(self.D.shape[1])*self.rho_ratio
         )
 
     def im2slices(self, S):
@@ -149,7 +161,6 @@ class ConvBPDNSliceTwoBlockCnstrnt(admm.ADMMTwoBlockCnstrnt):
         with torch.no_grad():
             S_torch = torch.from_numpy(S_torch)
             slices = F.unfold(S_torch, kernel_size=kernel_size)
-        assert slices.size(1) == self.D.shape[0]
         return slices.numpy()
 
     def slices2im(self, slices):
@@ -172,16 +183,22 @@ class ConvBPDNSliceTwoBlockCnstrnt(admm.ADMMTwoBlockCnstrnt):
         return S_recon
 
     def xstep(self):
+        self.extra_timer.start('xstep')
         YU = self.Y - self.U
-        self.X = np.matmul(self.inv, self.cnst_AT(YU))
+        YU0, YU1 = self.block_sep(YU)
+        rhs = self.cnst_A0T(YU0) + self.rho_ratio*self.cnst_A1T(YU1)
+        self.X = np.matmul(self.inv, rhs)
+        self.extra_timer.stop('xstep')
 
     def ystep(self):
+        self.extra_timer.start('ystep')
         AXU = self.AX + self.U
         p = self.S_slice / self.rho + self.block_sep0(AXU)
         recon = self.slices2im(p)
         Y0 = p - self.im2slices(recon) / (p.shape[1] + self.rho)
-        Y1 = sl.shrink1(self.block_sep1(AXU), self.lmbda/self.rho)
+        Y1 = sl.shrink1(self.block_sep1(AXU), self.lmbda/self.rho/self.rho_ratio)
         self.Y = self.block_cat(Y0, Y1)
+        self.extra_timer.stop('ystep')
 
     def cnst_A0(self, X):
         return np.matmul(self.D, X)
@@ -257,6 +274,13 @@ class ConvBPDNSliceTwoBlockCnstrnt(admm.ADMMTwoBlockCnstrnt):
                     self.rho = tau * self.rho
                 elif s > mu * r:
                     self.rho = self.rho / tau
+
+    def itstat_extra(self):
+        """Get xstep/ystep solve time. Return average time."""
+        niters = self.k + 1
+        xstep_elapsed = self.extra_timer.elapsed('xstep')
+        ystep_elapsed = self.extra_timer.elapsed('ystep')
+        return (xstep_elapsed/niters, ystep_elapsed/niters)
 
 
 class ConvBPDNSlice(admm.ADMM):
