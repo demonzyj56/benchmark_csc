@@ -182,23 +182,53 @@ class ConvBPDNSliceTwoBlockCnstrnt(admm.ADMMTwoBlockCnstrnt):
         )
         return S_recon
 
+    def yinit(self, yshape):
+        """Initialization for variable Y."""
+        Y = super().yinit(yshape)
+        self._Y0, self._Y1 = self.block_sep(Y)
+        return Y
+
+    def uinit(self, ushape):
+        """Initialization for variable U."""
+        U = super().uinit(ushape)
+        self._U0, self._U1 = self.block_sep(U)
+        return U
+
     def xstep(self):
         self.extra_timer.start('xstep')
-        YU = self.Y - self.U
-        YU0, YU1 = self.block_sep(YU)
-        rhs = self.cnst_A0T(YU0) + self.rho_ratio*self.cnst_A1T(YU1)
+        rhs = self.cnst_A0T(self._Y0-self._U0) + \
+            self.rho_ratio*self.cnst_A1T(self._Y1-self._U1)
         self.X = np.matmul(self.inv, rhs)
         self.extra_timer.stop('xstep')
 
+    def relax_AX(self):
+        self._AX0nr, self._AX1nr = self.cnst_A0(self.X), self.cnst_A1(self.X)
+        if self.rlx == 1.0:
+            self._AX0, self._AX1 = self._AX0nr, self._AX1nr
+        else:
+            # c0 and c1 are all zero
+            alpha = self.rlx
+            self._AX0 = alpha*self._AX0nr + (1-alpha)*self._Y0
+            self._AX1 = alpha*self._AX1nr + (1-alpha)*self._Y1
+        self.AXnr = self.block_cat(self._AX0nr, self._AX1nr)
+        self.AX = self.block_cat(self._AX0, self._AX1)
+
     def ystep(self):
         self.extra_timer.start('ystep')
-        AXU = self.AX + self.U
-        p = self.S_slice / self.rho + self.block_sep0(AXU)
+        p = self.S_slice / self.rho + self._AX0 + self._U0
         recon = self.slices2im(p)
-        Y0 = p - self.im2slices(recon) / (p.shape[1] + self.rho)
-        Y1 = sl.shrink1(self.block_sep1(AXU), self.lmbda/self.rho/self.rho_ratio)
-        self.Y = self.block_cat(Y0, Y1)
+        self._Y0[:] = p - self.im2slices(recon) / (p.shape[1] + self.rho)
+        self._Y1[:] = sl.shrink1(self._AX1+self._U1, self.lmbda/self.rho/self.rho_ratio)
+        self.Y = self.block_cat(self._Y0, self._Y1)
         self.extra_timer.stop('ystep')
+
+    def ustep(self):
+        self._U0 += self._AX0 - self._Y0
+        self._U1 += self._AX1 - self._Y1
+        self.U = self.block_cat(self._U0, self._U1)
+
+    def rsdl_r(self, AX, Y):
+        return AX - Y
 
     def cnst_A0(self, X):
         return np.matmul(self.D, X)
@@ -211,6 +241,12 @@ class ConvBPDNSliceTwoBlockCnstrnt(admm.ADMMTwoBlockCnstrnt):
 
     def cnst_A1T(self, Y1):
         return Y1
+
+    def var_y0(self):
+        return self._Y0
+
+    def var_y1(self):
+        return self._Y1
 
     def getmin(self):
         """Reimplement getmin func to have unified output layout."""
