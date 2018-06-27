@@ -143,9 +143,8 @@ class ConvBPDNSliceTwoBlockCnstrnt(admm.ADMMTwoBlockCnstrnt):
     def setdict(self, D):
         """Set dictionary properly."""
         self.D = D.reshape(-1, D.shape[-1])
-        self.inv = np.linalg.inv(
-            self.D.T.dot(self.D)+np.identity(self.D.shape[1])*self.rho_ratio
-        )
+        self.lu, self.piv = sl.lu_factor(self.D, self.rho_ratio)
+        self.lu = np.asarray(self.lu, dtype=self.dtype)
 
     def im2slices(self, S):
         r"""Convert the input signal :math:`S` to a slice form.
@@ -198,7 +197,17 @@ class ConvBPDNSliceTwoBlockCnstrnt(admm.ADMMTwoBlockCnstrnt):
         self.extra_timer.start('xstep')
         rhs = self.cnst_A0T(self._Y0-self._U0) + \
             self.rho_ratio*self.cnst_A1T(self._Y1-self._U1)
-        self.X = np.matmul(self.inv, rhs)
+        if self.X is None:
+            self.X = np.zeros_like(rhs, dtype=self.dtype)
+        # NOTE:
+        # Here we solve the sparse code X for each batch index i, since X is
+        # organized as [batch_size, num_atoms, num_signals].  This interface
+        # may be modified for online setting.
+        for i in range(self.X.shape[0]):
+            self.X[i] = np.asarray(
+                sl.lu_solve_ATAI(self.D, self.rho_ratio, rhs[i], self.lu, self.piv),
+                dtype=self.dtype
+            )
         self.extra_timer.stop('xstep')
 
     def relax_AX(self):
