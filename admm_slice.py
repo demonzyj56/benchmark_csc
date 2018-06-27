@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """Solve CSC using ADMM on slices."""
 import copy
 import logging
