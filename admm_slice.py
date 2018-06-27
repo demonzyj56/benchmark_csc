@@ -67,6 +67,22 @@ def _crop_zeros_back(blob, pad_h, pad_w):
     return blob[:, :, :-pad_h, :-pad_w]
 
 
+def _iter_recorder(solver):
+    """Print the iteration information in logger when not in verbose mode."""
+    if not solver.opt['Verbose']:
+        if len(solver.itstat) == 0:
+            elapsed_time = 0.
+        elif len(solver.itstat) == 1:
+            elapsed_time = solver.itstat[0].Time
+        else:
+            elapsed_time = solver.itstat[-1].Time - solver.itstat[-2].Time
+        logger.info(
+            'Iteration %d/%d, elapsed time: %.3fs',
+            solver.k+1, solver.opt['MaxMainIter'], elapsed_time
+        )
+    return 0
+
+
 class ConvBPDNSliceTwoBlockCnstrnt(admm.ADMMTwoBlockCnstrnt):
 
     class Options(admm.ADMMTwoBlockCnstrnt.Options):
@@ -76,6 +92,7 @@ class ConvBPDNSliceTwoBlockCnstrnt(admm.ADMMTwoBlockCnstrnt):
             'AuxVarObj': False,
             'Boundary': 'circulant_back',
             'RhoRatio': 1.,
+            'Callback': _iter_recorder,
         })
         defaults['AutoRho'].update({
             'Enabled': True,
