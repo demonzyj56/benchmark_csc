@@ -7,6 +7,7 @@ import numpy as np
 from sporco import util
 from admm_slice import ConvBPDNSlice, ConvBPDNSliceTwoBlockCnstrnt
 from test_fold import fold_naive, unfold_naive
+import image_dataset
 
 
 class TestConvBPDNSliceTwoBlockCnstrnt(unittest.TestCase):
@@ -23,7 +24,8 @@ class TestConvBPDNSliceTwoBlockCnstrnt(unittest.TestCase):
         self.sl, self.sh = util.tikhonov_filter(self.img, self.fltlmbd, self.npd)
         self.D = util.convdicts()['G:12x12x36']
         opt = ConvBPDNSliceTwoBlockCnstrnt.Options({
-            'Verbose': True, 'MaxMainIter': 200, 'RelStopTol': 5e-3
+            'Verbose': True, 'MaxMainIter': 200, 'RelStopTol': 5e-3,
+            'Boundary': 'zeros_back'
         })
         self.solver = ConvBPDNSliceTwoBlockCnstrnt(self.D, self.sh,
                                                    lmbda=self.lmbda, opt=opt,
@@ -53,7 +55,8 @@ class TestConvBPDNSlice(unittest.TestCase):
         self.sl, self.sh = util.tikhonov_filter(self.img, self.fltlmbd, self.npd)
         self.D = util.convdicts()['G:12x12x36']
         opt = ConvBPDNSlice.Options({'Verbose': True, 'MaxMainIter': 200,
-                                     'RelStopTol': 5e-3, 'AuxVarObj': False})
+                                     'RelStopTol': 5e-3,
+                                     'Boundary': 'zeros_back'})
         self.solver = ConvBPDNSlice(self.D, self.sh, lmbda=self.lmbda, opt=opt,
                                     dimK=0)
 
@@ -75,8 +78,6 @@ class TestConvBPDNSlice(unittest.TestCase):
 
     def test_im2slices_zeros_back(self):
         """Check sanity of im2slices."""
-        # TODO(leoyolo): for current implementation ConvBPDNSlice.im2slices
-        # only work on zero-padding boundary condition so we follow this.
         blob = np.random.randn(*self.solver.S.shape)
         out1 = self.solver.im2slices(blob)
         blob_padded = np.pad(blob, ((0, 0), (0, 0), (0, 11), (0, 11)), 'constant')
@@ -85,13 +86,40 @@ class TestConvBPDNSlice(unittest.TestCase):
 
     def test_slices2im_zeros_back(self):
         """Check sanity of slices2im."""
-        # TODO(leoyolo): for current implementation ConvBPDNSlice.slices2im
-        # only work on zero-padding boundary condition so we follow this.
         slices = np.random.randn(*self.solver.S_slice.shape)
         out1 = self.solver.slices2im(slices)
         out2 = fold_naive(slices, 256+12-1, 12)
         out2 = out2[:, :, :256, :256]
         self.assertTrue(np.allclose(out1, out2))
+
+
+class TestConvBPDNSliceColor(unittest.TestCase):
+    """Test fixture for ConvBPDNSlice for color image input."""
+
+    def setUp(self):
+        """Set image to be a color image."""
+        self.img = image_dataset.create_image_blob('lena', gray=False)
+        self.sl, self.sh = util.tikhonov_filter(self.img, 10, 16)
+        self.D = util.convdicts()['RGB:8x8x3x64']
+        self.lmbda = 0.05
+        opt = ConvBPDNSlice.Options({
+            'Verbose': True, 'MaxMainIter': 200,
+            'RelStopTol': 5e-3, 'Boundary': 'zeros_back'
+        })
+        self.solver = ConvBPDNSlice(self.D, self.sh, lmbda=self.lmbda, opt=opt)
+
+    def test_shape_sanity(self):
+        """Test the internal shape is correct."""
+        self.assertSequenceEqual(self.solver.D.shape, [8*8*3, 64])
+        self.assertSequenceEqual(self.solver.S_slice.shape,
+                                 [1, 8*8*3, 512*512])
+        self.assertSequenceEqual(self.solver.Y.shape,
+                                 [1, 8*8*3, 512*512])
+        self.assertSequenceEqual(self.solver.U.shape,
+                                 [1, 8*8*3, 512*512])
+        self.solver.xstep()
+        self.assertSequenceEqual(self.solver.X.shape,
+                                 [1, 64, 512*512])
 
 
 if __name__ == "__main__":
