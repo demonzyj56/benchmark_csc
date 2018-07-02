@@ -160,7 +160,11 @@ class ConvBPDNSliceTwoBlockCnstrnt(admm.ADMMTwoBlockCnstrnt):
 
     def setdict(self, D):
         """Set dictionary properly."""
-        self.D = D.reshape(-1, D.shape[-1])
+        if D.shape[-2] != 3:
+            self.D = D.reshape((-1, D.shape[-1]))
+        else:
+            self.D = D.transpose(2, 0, 1, 3)
+            self.D = self.D.reshape((-1, self.D.shape[-1]))
         self.lu, self.piv = sl.lu_factor(self.D, self.rho_ratio)
         self.lu = np.asarray(self.lu, dtype=self.dtype)
 
@@ -244,7 +248,9 @@ class ConvBPDNSliceTwoBlockCnstrnt(admm.ADMMTwoBlockCnstrnt):
         self.extra_timer.start('ystep')
         p = self.S_slice / self.rho + self._AX0 + self._U0
         recon = self.slices2im(p)
-        self._Y0[:] = p - self.im2slices(recon) / (p.shape[1] + self.rho)
+        # n should be the dict size for each channel
+        n = np.prod(self.cri.shpD[:2])
+        self._Y0[:] = p - self.im2slices(recon) / (n + self.rho)
         self._Y1[:] = sl.shrink1(self._AX1+self._U1, self.lmbda/self.rho/self.rho_ratio)
         self.Y = self.block_cat(self._Y0, self._Y1)
         self.extra_timer.stop('ystep')
@@ -431,8 +437,15 @@ class ConvBPDNSlice(admm.ADMM):
         # Number of elements of sparse representation x is invariant to
         # slice/FFT solvers.
         Nx = np.product(self.cri.shpX)
-        # (N, M)
-        self.D = D.reshape((-1, D.shape[-1]))
+        # NOTE: To incorporate with im2slices/slices2im, where each slice
+        # is organized as in_channels x patch_size x patch_size, the dictionary
+        # is first transposed to [in_channels, patch_size, patch_size, out_channels],
+        # and then reshape to 2-D (N, M).
+        if D.shape[-2] != 3:
+            self.D = D.reshape((-1, D.shape[-1]))
+        else:
+            self.D = D.transpose(2, 0, 1, 3)
+            self.D = self.D.reshape((-1, D.shape[-1]))
         # Externally the input signal should have a data layout as
         # S(N0, N1, ..., C, K).
         # First convert to common pytorch Variable layout.
@@ -536,7 +549,9 @@ class ConvBPDNSlice(admm.ADMM):
         # Notice that AX = D*X.
         p = self.S_slice / self.rho + self.AX + self.U
         recon = self.slices2im(p)
-        self.Y = p - self.im2slices(recon) / (p.shape[1] + self.rho)
+        # n should be dict size for each channel
+        n = np.prod(self.cri.shpD[:2])
+        self.Y = p - self.im2slices(recon) / (n + self.rho)
         self.extra_timer.stop('ystep')
 
     def cnst_A(self, X):
@@ -575,7 +590,8 @@ class ConvBPDNSlice(admm.ADMM):
         """Slices are initialized using signal slices."""
         _ = yshape
         y_init = self.S_slice.copy()
-        y_init /= y_init.shape[1]
+        n = np.prod(self.cri.shpD[:2])
+        y_init /= n
         return y_init
 
     def getmin(self):

@@ -104,13 +104,15 @@ class TestConvBPDNSliceColor(unittest.TestCase):
         self.lmbda = 0.05
         opt = ConvBPDNSlice.Options({
             'Verbose': True, 'MaxMainIter': 200,
-            'RelStopTol': 5e-3, 'Boundary': 'zeros_back'
+            'RelStopTol': 5e-3, 'Boundary': 'zeros_back',
+            'BPDN': {'MaxMainIter': 1, 'Verbose': False}
         })
         self.solver = ConvBPDNSlice(self.D, self.sh, lmbda=self.lmbda, opt=opt)
 
     def test_shape_sanity(self):
         """Test the internal shape is correct."""
         self.assertSequenceEqual(self.solver.D.shape, [8*8*3, 64])
+        self.assertSequenceEqual(self.solver.S.shape, [1, 3, 512, 512])
         self.assertSequenceEqual(self.solver.S_slice.shape,
                                  [1, 8*8*3, 512*512])
         self.assertSequenceEqual(self.solver.Y.shape,
@@ -120,6 +122,25 @@ class TestConvBPDNSliceColor(unittest.TestCase):
         self.solver.xstep()
         self.assertSequenceEqual(self.solver.X.shape,
                                  [1, 64, 512*512])
+        D = self.solver.D.copy()
+        D = D.reshape(3, 8, 8, 64).transpose(1, 2, 0, 3)
+        self.assertTrue(np.allclose(D, self.D))
+
+    def test_im2slices_zeros_back(self):
+        """Check that im2slices is correct for color images."""
+        blob = np.random.randn(*self.solver.S.shape)
+        out1 = self.solver.im2slices(blob)
+        blob_padded = np.pad(blob, ((0, 0), (0, 0), (0, 7), (0, 7)), 'constant')
+        out2 = unfold_naive(blob_padded, 8)
+        self.assertTrue(np.allclose(out1, out2))
+
+    def test_slices2im_zeros_back(self):
+        """Check sanity of slices2im."""
+        slices = np.random.randn(*self.solver.S_slice.shape)
+        out1 = self.solver.slices2im(slices)
+        out2 = fold_naive(slices, 512+8-1, 8)
+        out2 = out2[:, :, :512, :512]
+        self.assertTrue(np.allclose(out1, out2))
 
 
 if __name__ == "__main__":
