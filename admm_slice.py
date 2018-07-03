@@ -92,7 +92,6 @@ class ConvBPDNSliceTwoBlockCnstrnt(admm.ADMMTwoBlockCnstrnt):
             'RelaxParam': 1.8,
             'AuxVarObj': False,
             'Boundary': 'circulant_back',
-            'RhoRatio': 1.,
             'Callback': _iter_recorder,
         })
         defaults['AutoRho'].update({
@@ -139,8 +138,6 @@ class ConvBPDNSliceTwoBlockCnstrnt(admm.ADMMTwoBlockCnstrnt):
         # set boundary condition
         self.set_attr('boundary', opt['Boundary'], dval='circulant_back',
                       dtype=None)
-        # set rho ratio between two constraints
-        self.set_attr('rho_ratio', opt['RhoRatio'], dval=0.5, dtype=self.dtype)
         self.setdict(D)
         # Number of elements of sparse representation x is invariant to
         # slice/FFT solvers.
@@ -153,8 +150,8 @@ class ConvBPDNSliceTwoBlockCnstrnt(admm.ADMMTwoBlockCnstrnt):
         self.S = self.S.squeeze(-1).transpose((3, 2, 0, 1))
         # [K, n, N]
         self.S_slice = self.im2slices(self.S)
-        yshape = list(self.S_slice.shape)
-        yshape[1] = self.D.shape[0] + self.D.shape[1]  # n+m
+        yshape = (self.S_slice.shape[0], self.D.shape[0] + self.D.shape[1],
+                  self.S_slice.shape[-1])
         super().__init__(Nx, yshape, 1, self.D.shape[0], S.dtype, opt)
         self.extra_timer = su.Timer(['xstep', 'ystep'])
 
@@ -165,7 +162,7 @@ class ConvBPDNSliceTwoBlockCnstrnt(admm.ADMMTwoBlockCnstrnt):
         else:
             self.D = D.transpose(2, 0, 1, 3)
             self.D = self.D.reshape((-1, self.D.shape[-1]))
-        self.lu, self.piv = sl.lu_factor(self.D, self.rho_ratio)
+        self.lu, self.piv = sl.lu_factor(self.D, 1.)
         self.lu = np.asarray(self.lu, dtype=self.dtype)
 
     def im2slices(self, S):
@@ -207,6 +204,11 @@ class ConvBPDNSliceTwoBlockCnstrnt(admm.ADMMTwoBlockCnstrnt):
         """Initialization for variable Y."""
         Y = super().yinit(yshape)
         self._Y0, self._Y1 = self.block_sep(Y)
+        # n = np.prod(self.cri.shpD[:2])
+        # self._Y0 = self.S_slice / n
+        # y1shape = (self.S_slice.shape[0], self.D.shape[-1], self.S_slice.shape[-1])
+        # self._Y1 = np.zeros(y1shape, dtype=self.dtype)
+        # Y = self.block_cat(self._Y0, self._Y1)
         return Y
 
     def uinit(self, ushape):
@@ -217,8 +219,7 @@ class ConvBPDNSliceTwoBlockCnstrnt(admm.ADMMTwoBlockCnstrnt):
 
     def xstep(self):
         self.extra_timer.start('xstep')
-        rhs = self.cnst_A0T(self._Y0-self._U0) + \
-            self.rho_ratio*self.cnst_A1T(self._Y1-self._U1)
+        rhs = self.cnst_AT(self.Y-self.U)
         if self.X is None:
             self.X = np.zeros_like(rhs, dtype=self.dtype)
         # NOTE:
@@ -227,7 +228,7 @@ class ConvBPDNSliceTwoBlockCnstrnt(admm.ADMMTwoBlockCnstrnt):
         # may be modified for online setting.
         for i in range(self.X.shape[0]):
             self.X[i] = np.asarray(
-                sl.lu_solve_ATAI(self.D, self.rho_ratio, rhs[i], self.lu, self.piv),
+                sl.lu_solve_ATAI(self.D, 1., rhs[i], self.lu, self.piv),
                 dtype=self.dtype
             )
         self.extra_timer.stop('xstep')
@@ -251,7 +252,7 @@ class ConvBPDNSliceTwoBlockCnstrnt(admm.ADMMTwoBlockCnstrnt):
         # n should be the dict size for each channel
         n = np.prod(self.cri.shpD[:2])
         self._Y0[:] = p - self.im2slices(recon) / (n + self.rho)
-        self._Y1[:] = sl.shrink1(self._AX1+self._U1, self.lmbda/self.rho/self.rho_ratio)
+        self._Y1[:] = sl.shrink1(self._AX1+self._U1, self.lmbda/self.rho)
         self.Y = self.block_cat(self._Y0, self._Y1)
         self.extra_timer.stop('ystep')
 
@@ -262,6 +263,16 @@ class ConvBPDNSliceTwoBlockCnstrnt(admm.ADMMTwoBlockCnstrnt):
 
     def rsdl_r(self, AX, Y):
         return AX - Y
+
+    def rsdl_s(self, Yprev, Y):
+        """Compute dual residual vector."""
+        # TODO(leoyolo): figure out why this is valid.
+        return self.rho*linalg.norm(self.cnst_AT(self.U))
+
+    def rsdl_sn(self, U):
+        """Compute dual residual normalisation term."""
+        # TODO(leoyolo): figure out why this is valid.
+        return self.rho*linalg.norm(U)
 
     def cnst_A0(self, X):
         return np.matmul(self.D, X)
