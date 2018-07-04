@@ -7,13 +7,15 @@ import numpy as np
 from scipy import linalg
 import torch
 import torch.nn.functional as F
-from sporco.admm import admm, bpdn, cbpdn
+from sporco.admm import admm, bpdn
 import sporco.cnvrep as cr
 import sporco.linalg as sl
 import sporco.util as su
 from sporco.util import u
 
 logger = logging.getLogger(__name__)
+
+__all__ = ['ConvBPDNSlice', 'ConvBPDNSliceTwoBlockCnstrnt']
 
 
 def _pad_circulant_front(blob, pad_h, pad_w):
@@ -96,11 +98,11 @@ class ConvBPDNSliceTwoBlockCnstrnt(admm.ADMMTwoBlockCnstrnt):
         })
         defaults['AutoRho'].update({
             'Enabled': True,
-            'AutoScaling': True,
+            'AutoScaling': False,
             'Period': 1,
-            'Scaling': 1000.,  # tau
-            'RsdlRatio': 1.2,  # mu
-            'RsdlTarget': None,  # xi, initial value depends on lambda
+            'Scaling': 2.,  # tau
+            'RsdlRatio': 10.,  # mu
+            'RsdlTarget': 1.,  # xi, initial value depends on lambda
         })
 
         def __init__(self, opt=None):
