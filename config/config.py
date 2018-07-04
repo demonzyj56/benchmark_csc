@@ -1,7 +1,6 @@
 """Config system from Detectron."""
 import copy
 import logging
-import os
 from ast import literal_eval
 from past.builtins import basestring
 import numpy as np
@@ -20,7 +19,6 @@ __C.output_path = '.default_output'
 __C.rng_seed = -1
 __C.name = 'default_csc'
 __C.data_type = 'float32'
-__C.snapshot = True
 __C.dataset = 'lena'
 __C.solvers = ['ConvBPDN', 'ConvBPDNSliceTwoBlockCnstrnt']
 __C.statistics = ['ObjFun', 'Time']

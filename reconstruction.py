@@ -169,23 +169,6 @@ def main():
     else:
         torch.set_default_dtype(torch.float64)
     model = train_model()
-    if cfg.snapshot:
-        # construct a meaningful filename
-        try:
-            # assume running from root_path
-            # https://stackoverflow.com/a/21901260
-            commit_hash = subprocess.check_output(
-                ['git', 'rev-parse', '--short', 'HEAD']
-            ).strip().decode('utf-8')
-        except:
-            commit_hash = 'unknown'
-        filename = '{:s}_{:s}-{:s}.pkl'.format(
-            cfg.name, cfg.dataset, commit_hash
-        )
-        path = os.path.join(cfg.output_path, filename)
-        logger.info('Saving model to %s', path)
-        with open(path, 'wb') as f:
-            pickle.dump(model, f)
 
 
 if __name__ == "__main__":
