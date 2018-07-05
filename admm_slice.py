@@ -206,11 +206,6 @@ class ConvBPDNSliceTwoBlockCnstrnt(admm.ADMMTwoBlockCnstrnt):
         """Initialization for variable Y."""
         Y = super().yinit(yshape)
         self._Y0, self._Y1 = self.block_sep(Y)
-        # n = np.prod(self.cri.shpD[:2])
-        # self._Y0 = self.S_slice / n
-        # y1shape = (self.S_slice.shape[0], self.D.shape[-1], self.S_slice.shape[-1])
-        # self._Y1 = np.zeros(y1shape, dtype=self.dtype)
-        # Y = self.block_cat(self._Y0, self._Y1)
         return Y
 
     def uinit(self, ushape):
@@ -249,14 +244,20 @@ class ConvBPDNSliceTwoBlockCnstrnt(admm.ADMMTwoBlockCnstrnt):
 
     def ystep(self):
         self.extra_timer.start('ystep')
+        self.y0step()
+        self.y1step()
+        self.Y = self.block_cat(self._Y0, self._Y1)
+        self.extra_timer.stop('ystep')
+
+    def y0step(self):
         p = self.S_slice / self.rho + self._AX0 + self._U0
         recon = self.slices2im(p)
         # n should be the dict size for each channel
         n = np.prod(self.cri.shpD[:2])
-        self._Y0[:] = p - self.im2slices(recon) / (n + self.rho)
-        self._Y1[:] = sl.shrink1(self._AX1+self._U1, self.lmbda/self.rho)
-        self.Y = self.block_cat(self._Y0, self._Y1)
-        self.extra_timer.stop('ystep')
+        self._Y0 = p - self.im2slices(recon) / (n + self.rho)
+
+    def y1step(self):
+        self._Y1 = sl.shrink1(self._AX1+self._U1, self.lmbda/self.rho)
 
     def ustep(self):
         self._U0 += self._AX0 - self._Y0
