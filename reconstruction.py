@@ -97,8 +97,10 @@ def train_model():
     img = image_dataset.create_image_blob(cfg.dataset, cfg.data_type,
                                           scaled=True, gray=gray)
     sl, sh = su.tikhonov_filter(img, 10., 16)
-    solvers = [setup_solver(s, D.copy(), sh.copy()) for s in cfg.solvers]
-    for idx, (solver, solver_name) in enumerate(zip(solvers, cfg.solvers)):
+    solvers = [setup_solver(s, D.copy(), sh.copy())
+               for s in cfg.reconstruction.solvers]
+    for idx, (solver, solver_name) in enumerate(zip(solvers,
+                                                    cfg.reconstruction.solvers)):
         logger.info(
             'Solving %d/%d CSC algorithm: %s', idx+1, len(solvers), solver_name
         )

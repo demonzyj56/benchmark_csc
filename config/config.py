@@ -5,7 +5,9 @@ from ast import literal_eval
 from past.builtins import basestring
 import numpy as np
 import yaml
-from sporco.admm.cbpdn import ConvBPDN
+from sporco.admm.cbpdn import (
+    ConvBPDN, ConvBPDNMaskDcpl, AddMaskSim
+)
 import admm_slice
 from config.attr_dict import AttrDict
 
@@ -20,18 +22,20 @@ __C.rng_seed = -1
 __C.name = 'default_csc'
 __C.data_type = 'float32'
 __C.dataset = 'lena'
-__C.solvers = ['ConvBPDN', 'ConvBPDNSliceTwoBlockCnstrnt']
-__C.statistics = ['ObjFun', 'Time']
 # If true, then convert rgb image to grayscale image. This has no effect on
 # grayscale input image.
 __C.rgb2gray = True
 __C.lmbda = 5e-2
+
+# Statistics to plot.
+__C.statistics = ['ObjFun', 'Time']
 
 #-----------------------------#
 # options for CBPDN
 #-----------------------------#
 # Respect default values.
 __C.ConvBPDN = AttrDict(ConvBPDN.Options.defaults)
+__C.ConvBPDNMaskDcpl = AttrDict(ConvBPDNMaskDcpl.Options.defaults)
 for solver in admm_slice.__all__:
     setattr(__C, solver, getattr(admm_slice, solver).Options.defaults)
 
@@ -41,6 +45,24 @@ __C.cbpdn.MaxMainIter = 100
 __C.cbpdn.Verbose = True
 __C.cbpdn.RelStopTol = 5e-3
 
+#-----------------------------#
+# Options for reconstruction
+#-----------------------------#
+__C.reconstruction = AttrDict()
+__C.reconstruction.solvers = ['ConvBPDN', 'ConvBPDNSliceTwoBlockCnstrnt']
+
+#-----------------------------#
+# Options for inpainting
+#-----------------------------#
+__C.inpainting = AttrDict()
+__C.inpainting.solvers = ['ConvBPDNMaskDcpl', 'ConvBPDNSliceMaskDcpl']
+__C.inpainting.statistics = ['ObjFun', 'Time']
+
+# inpainting corruption percentage
+__C.inpainting.corruption = 0.5
+
+# If true, then handle the boundary via masking.
+__C.inpainting.boundary_handling = True
 
 #-----------------------------#
 # Helper functions, modified from Detectron
