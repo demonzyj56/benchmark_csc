@@ -15,7 +15,8 @@ from sporco.util import u
 
 logger = logging.getLogger(__name__)
 
-__all__ = ['ConvBPDNSlice', 'ConvBPDNSliceTwoBlockCnstrnt']
+__all__ = ['ConvBPDNSlice', 'ConvBPDNSliceTwoBlockCnstrnt',
+           'ConvBPDNSliceMaskDcpl']
 
 
 def _pad_circulant_front(blob, pad_h, pad_w):
@@ -92,6 +93,7 @@ class ConvBPDNSliceTwoBlockCnstrnt(admm.ADMMTwoBlockCnstrnt):
         defaults = copy.deepcopy(admm.ADMMTwoBlockCnstrnt.Options.defaults)
         defaults.update({
             'RelaxParam': 1.8,
+            'Gamma': 1.,
             'AuxVarObj': False,
             'Boundary': 'circulant_back',
             'Callback': _iter_recorder,
@@ -140,6 +142,8 @@ class ConvBPDNSliceTwoBlockCnstrnt(admm.ADMMTwoBlockCnstrnt):
         # set boundary condition
         self.set_attr('boundary', opt['Boundary'], dval='circulant_back',
                       dtype=None)
+        # set weight factor between two constraints
+        self.set_attr('gamma', opt['Gamma'], dval=1., dtype=self.dtype)
         self.setdict(D)
         # Number of elements of sparse representation x is invariant to
         # slice/FFT solvers.
@@ -164,7 +168,7 @@ class ConvBPDNSliceTwoBlockCnstrnt(admm.ADMMTwoBlockCnstrnt):
         else:
             self.D = D.transpose(2, 0, 1, 3)
             self.D = self.D.reshape((-1, self.D.shape[-1]))
-        self.lu, self.piv = sl.lu_factor(self.D, 1.)
+        self.lu, self.piv = sl.lu_factor(self.D, self.gamma ** 2)
         self.lu = np.asarray(self.lu, dtype=self.dtype)
 
     def im2slices(self, S):
@@ -216,7 +220,8 @@ class ConvBPDNSliceTwoBlockCnstrnt(admm.ADMMTwoBlockCnstrnt):
 
     def xstep(self):
         self.extra_timer.start('xstep')
-        rhs = self.cnst_AT(self.Y-self.U)
+        rhs = self.cnst_A0T(self._Y0 - self._U0) + \
+            self.gamma * (self.gamma * self._Y1 - self._U1)
         if self.X is None:
             self.X = np.zeros_like(rhs, dtype=self.dtype)
         # NOTE:
@@ -225,7 +230,7 @@ class ConvBPDNSliceTwoBlockCnstrnt(admm.ADMMTwoBlockCnstrnt):
         # may be modified for online setting.
         for i in range(self.X.shape[0]):
             self.X[i] = np.asarray(
-                sl.lu_solve_ATAI(self.D, 1., rhs[i], self.lu, self.piv),
+                sl.lu_solve_ATAI(self.D, self.gamma**2, rhs[i], self.lu, self.piv),
                 dtype=self.dtype
             )
         self.extra_timer.stop('xstep')
@@ -238,7 +243,7 @@ class ConvBPDNSliceTwoBlockCnstrnt(admm.ADMMTwoBlockCnstrnt):
             # c0 and c1 are all zero
             alpha = self.rlx
             self._AX0 = alpha*self._AX0nr + (1-alpha)*self._Y0
-            self._AX1 = alpha*self._AX1nr + (1-alpha)*self._Y1
+            self._AX1 = alpha*self._AX1nr + (1-alpha)*self.gamma*self._Y1
         self.AXnr = self.block_cat(self._AX0nr, self._AX1nr)
         self.AX = self.block_cat(self._AX0, self._AX1)
 
@@ -257,15 +262,16 @@ class ConvBPDNSliceTwoBlockCnstrnt(admm.ADMMTwoBlockCnstrnt):
         self._Y0 = p - self.im2slices(recon) / (n + self.rho)
 
     def y1step(self):
-        self._Y1 = sl.shrink1(self._AX1+self._U1, self.lmbda/self.rho)
+        self._Y1 = sl.shrink1((self._AX1 + self._U1) / self.gamma,
+                              self.lmbda/self.rho/self.gamma/self.gamma)
 
     def ustep(self):
         self._U0 += self._AX0 - self._Y0
-        self._U1 += self._AX1 - self._Y1
+        self._U1 += self._AX1 - self.gamma * self._Y1
         self.U = self.block_cat(self._U0, self._U1)
 
     def rsdl_r(self, AX, Y):
-        return AX - Y
+        return AX + self.cnst_B(Y)
 
     def rsdl_s(self, Yprev, Y):
         """Compute dual residual vector."""
@@ -281,13 +287,17 @@ class ConvBPDNSliceTwoBlockCnstrnt(admm.ADMMTwoBlockCnstrnt):
         return np.matmul(self.D, X)
 
     def cnst_A1(self, X):
-        return X
+        return self.gamma * X
 
     def cnst_A0T(self, Y0):
         return np.matmul(self.D.transpose(), Y0)
 
     def cnst_A1T(self, Y1):
-        return Y1
+        return self.gamma * Y1
+
+    def cnst_B(self, Y):
+        Y0, Y1 = self.block_sep(Y)
+        return -self.block_cat(Y0, self.gamma * Y1)
 
     def var_y0(self):
         return self._Y0
@@ -364,6 +374,46 @@ class ConvBPDNSliceTwoBlockCnstrnt(admm.ADMMTwoBlockCnstrnt):
         xstep_elapsed = self.extra_timer.elapsed('xstep')
         ystep_elapsed = self.extra_timer.elapsed('ystep')
         return (xstep_elapsed/niters, ystep_elapsed/niters)
+
+
+class ConvBPDNSliceMaskDcpl(ConvBPDNSliceTwoBlockCnstrnt):
+    """
+    Subclassing ConvBPDNSliceTwoBlockCnstrnt to enable mask decoupling as [1,2].
+
+    [1]B. Wohlberg, “Boundary handling for convolutional sparse
+        representations,” in 2016 IEEE International Conference on Image
+        Processing (ICIP), 2016, pp. 1833–1837.
+    [2]F. Heide, W. Heidrich, and G. Wetzstein, “Fast and flexible convolutional
+        sparse coding,” in 2015 IEEE Conference on Computer Vision and Pattern
+        Recognition (CVPR), 2015, pp. 5135–5143.
+    """
+
+    class Options(ConvBPDNSliceTwoBlockCnstrnt.Options):
+        """Same option as ConvBPDNSliceTwoBlockCnstrnt."""
+        defaults = copy.deepcopy(ConvBPDNSliceTwoBlockCnstrnt.Options.defaults)
+
+        def __init__(self, opt=None):
+            if opt is None:
+                opt = {}
+            super().__init__(opt)
+
+    def __init__(self, D, S, lmbda, W=None, opt=None, dimK=None, dimN=2):
+        """Assume the signal S has already been masked by W."""
+        if opt is None:
+            opt = ConvBPDNSliceMaskDcpl.Options()
+        super().__init__(D, S, lmbda, opt, dimK=dimK, dimN=dimN)
+        if W is None:
+            self.W = np.array([1.0], dtype=self.dtype)
+        else:
+            self.W = np.asarray(W.reshape(cr.mskWshape(W, self.cri)),
+                                dtype=self.dtype)
+            self.W = self.W.squeeze(-1).transpose((3, 2, 0, 1))
+
+    def slices2im(self, slices):
+        """Incorporating the mask W is equivalent to adding the mask at
+        reconstruction."""
+        recon = super().slices2im(slices)
+        return self.W * recon
 
 
 class ConvBPDNSlice(admm.ADMM):
