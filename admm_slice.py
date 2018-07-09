@@ -409,11 +409,17 @@ class ConvBPDNSliceMaskDcpl(ConvBPDNSliceTwoBlockCnstrnt):
                                 dtype=self.dtype)
             self.W = self.W.squeeze(-1).transpose((3, 2, 0, 1))
 
-    def slices2im(self, slices):
-        """Incorporating the mask W is equivalent to adding the mask at
-        reconstruction."""
-        recon = super().slices2im(slices)
-        return self.W * recon
+    def y0step(self):
+        """Add mask when solving for Y0."""
+        p = self.S_slice / self.rho + self._AX0 + self._U0
+        recon = self.W * self.slices2im(p)
+        n = np.prod(self.cri.shpD[:2])
+        self._Y0 = p - self.im2slices(recon) / (n + self.rho)
+
+    def obfn_dfd(self):
+        """Add mask to data fidelity term."""
+        recon = self.W * self.slices2im(self.cnst_A0(self.X))
+        return ((recon - self.S) ** 2).sum() / 2.0
 
 
 class ConvBPDNSlice(admm.ADMM):
