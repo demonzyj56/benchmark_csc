@@ -163,13 +163,26 @@ class ConvBPDNSliceTwoBlockCnstrnt(admm.ADMMTwoBlockCnstrnt):
 
     def setdict(self, D):
         """Set dictionary properly."""
-        if D.shape[-2] != 3:
+        if D.ndim == 2:  # [patch_size, num_atoms]
+            self.D = D.copy()
+        elif D.ndim == 3:  # [patch_h, patch_w, num_atoms]
             self.D = D.reshape((-1, D.shape[-1]))
-        else:
+        elif D.ndim == 4:  # [patch_h, patch_w, channels, num_atoms]
+            assert D.shape[-2] == 1 or D.shape[-2] == 3
             self.D = D.transpose(2, 0, 1, 3)
             self.D = self.D.reshape((-1, self.D.shape[-1]))
+        else:
+            raise ValueError('Invalid dict D dimension of {}'.format(D.shape))
         self.lu, self.piv = sl.lu_factor(self.D, self.gamma ** 2)
         self.lu = np.asarray(self.lu, dtype=self.dtype)
+
+    def getcoef(self):
+        """Returns signals and coefficients for solving
+
+        .. math::
+            \min_{D} (1/2)\|D x_i - y_i + u_i\|_2^2, D\in C.
+        """
+        return (self.Y-self.U, self.X)
 
     def im2slices(self, S):
         r"""Convert the input signal :math:`S` to a slice form.
