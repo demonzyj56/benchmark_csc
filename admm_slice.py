@@ -182,7 +182,7 @@ class ConvBPDNSliceTwoBlockCnstrnt(admm.ADMMTwoBlockCnstrnt):
         .. math::
             \min_{D} (1/2)\|D x_i - y_i + u_i\|_2^2, D\in C.
         """
-        return (self.Y-self.U, self.X)
+        return (self._Y0-self._U0, self.X)
 
     def im2slices(self, S):
         r"""Convert the input signal :math:`S` to a slice form.
