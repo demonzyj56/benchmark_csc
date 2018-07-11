@@ -159,6 +159,7 @@ class ConvBPDNSliceTwoBlockCnstrnt(admm.ADMMTwoBlockCnstrnt):
         yshape = (self.S_slice.shape[0], self.D.shape[0] + self.D.shape[1],
                   self.S_slice.shape[-1])
         super().__init__(Nx, yshape, 1, self.D.shape[0], S.dtype, opt)
+        self.X = np.zeros_like(self._Y1, dtype=self.dtype)
         self.extra_timer = su.Timer(['xstep', 'ystep'])
 
     def setdict(self, D):
@@ -177,12 +178,12 @@ class ConvBPDNSliceTwoBlockCnstrnt(admm.ADMMTwoBlockCnstrnt):
         self.lu = np.asarray(self.lu, dtype=self.dtype)
 
     def getcoef(self):
-        """Returns signals and coefficients for solving
+        """Returns coefficients and signals for solving
 
         .. math::
             \min_{D} (1/2)\|D x_i - y_i + u_i\|_2^2, D\in C.
         """
-        return (self._Y0-self._U0, self.X)
+        return (self.X, self._Y0-self._U0)
 
     def im2slices(self, S):
         r"""Convert the input signal :math:`S` to a slice form.
@@ -222,8 +223,10 @@ class ConvBPDNSliceTwoBlockCnstrnt(admm.ADMMTwoBlockCnstrnt):
     def yinit(self, yshape):
         """Initialization for variable Y."""
         Y = super().yinit(yshape)
-        self._Y0, self._Y1 = self.block_sep(Y)
-        return Y
+        self._Y1 = self.block_sep1(Y)
+        n = np.prod(self.cri.shpD[:2])
+        self._Y0 = self.S_slice / n
+        return self.block_cat(self._Y0, self._Y1)
 
     def uinit(self, ushape):
         """Initialization for variable U."""
@@ -235,8 +238,6 @@ class ConvBPDNSliceTwoBlockCnstrnt(admm.ADMMTwoBlockCnstrnt):
         self.extra_timer.start('xstep')
         rhs = self.cnst_A0T(self._Y0 - self._U0) + \
             self.gamma * (self.gamma * self._Y1 - self._U1)
-        if self.X is None:
-            self.X = np.zeros_like(rhs, dtype=self.dtype)
         # NOTE:
         # Here we solve the sparse code X for each batch index i, since X is
         # organized as [batch_size, num_atoms, num_signals].  This interface
@@ -470,11 +471,11 @@ class ConvBPDNSlice(admm.ADMM):
         })
         defaults['AutoRho'].update({
             'Enabled': True,
-            'AutoScaling': True,
+            'AutoScaling': False,
             'Period': 1,
-            'Scaling': 1000.,  # tau
-            'RsdlRatio': 1.2,  # mu
-            'RsdlTarget': None,  # xi, initial value depends on lambda
+            'Scaling': 2.,  # tau
+            'RsdlRatio': 10.,  # mu
+            'RsdlTarget': 1.,  # xi, initial value depends on lambda
         })
 
         def __init__(self, opt=None):
@@ -524,11 +525,7 @@ class ConvBPDNSlice(admm.ADMM):
         # is organized as in_channels x patch_size x patch_size, the dictionary
         # is first transposed to [in_channels, patch_size, patch_size, out_channels],
         # and then reshape to 2-D (N, M).
-        if D.shape[-2] != 3:
-            self.D = D.reshape((-1, D.shape[-1]))
-        else:
-            self.D = D.transpose(2, 0, 1, 3)
-            self.D = self.D.reshape((-1, D.shape[-1]))
+        self.setdict(D)
         # Externally the input signal should have a data layout as
         # S(N0, N1, ..., C, K).
         # First convert to common pytorch Variable layout.
@@ -541,12 +538,12 @@ class ConvBPDNSlice(admm.ADMM):
         # Set penalty parameter if not set
         self.set_attr('rho', opt['rho'], dval=(50.0*self.lmbda + 1.0),
                       dtype=self.dtype)
-        # Set xi if not set
-        self.set_attr('tau_xi', opt['AutoRho', 'RsdlTarget'],
-                      dval=(1.0+18.3**(np.log10(self.lmbda)+1.0)),
-                      dtype=self.dtype)
         super().__init__(Nx, self.S_slice.shape, self.S_slice.shape,
                          S.dtype, opt)
+        self.X = np.zeros(
+            (self.S_slice.shape[0], self.D.shape[-1], self.Y.shape[-1]),
+            dtype=self.dtype
+        )
         self.extra_timer = su.Timer(['xstep', 'ystep'])
 
     def im2slices(self, S):
@@ -595,8 +592,6 @@ class ConvBPDNSlice(admm.ADMM):
         batch indices k (implicit in the above form).
         """
         self.extra_timer.start('xstep')
-        # TODO(leoyolo): The naive method here is to apply BPDN once and
-        # destroy the object.
         signal = self.Y - self.U
         signal = signal.transpose((1, 0, 2))
         # [K, n, N] -> [n, K, N] -> [n, K*N]
@@ -708,6 +703,27 @@ class ConvBPDNSlice(admm.ADMM):
         """
         l1 = linalg.norm(self.X.ravel(), 1)
         return (self.lmbda * l1, l1)
+
+    def getcoef(self):
+        """Returns coefficients and signals for solving
+
+        .. math::
+            \min_{D} (1/2)\|D x_i - y_i + u_i\|_2^2, D\in C.
+        """
+        return (self.X, self.Y-self.U)
+
+    def setdict(self, D):
+        """Set dictionary properly."""
+        if D.ndim == 2:  # [patch_size, num_atoms]
+            self.D = D.copy()
+        elif D.ndim == 3:  # [patch_h, patch_w, num_atoms]
+            self.D = D.reshape((-1, D.shape[-1]))
+        elif D.ndim == 4:  # [patch_h, patch_w, channels, num_atoms]
+            assert D.shape[-2] == 1 or D.shape[-2] == 3
+            self.D = D.transpose(2, 0, 1, 3)
+            self.D = self.D.reshape((-1, self.D.shape[-1]))
+        else:
+            raise ValueError('Invalid dict D dimension of {}'.format(D.shape))
 
     def reconstruct(self, X=None):
         """Reconstruct representation.  The reconstruction follows standard
