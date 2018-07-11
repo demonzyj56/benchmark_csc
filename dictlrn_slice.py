@@ -6,12 +6,31 @@ import numpy as np
 from scipy import linalg
 from sporco.admm import admm
 from sporco.dictlrn import dictlrn
-from sporco.admm.cmod import getPcn
+#  from sporco.admm.cmod import getPcn
 import sporco.linalg as sl
 from sporco.util import u
 from admm_slice import *
 
 logger = logging.getLogger(__name__)
+
+
+def Pcn(D, zm=True):
+    """Constraint set projection function.
+
+    Parameters
+    ----------
+    D: array
+        Input dictionary to normalize.
+    zm: bool
+        If true, then the columns are mean subtracted before normalization.
+    """
+    # sum or average over all but last axis
+    axis = tuple(range(D.ndim-1))
+    if zm:
+        D -= np.mean(D, axis=axis, keepdims=True)
+    norm = np.sqrt(np.sum(D**2, axis=axis, keepdims=True))
+    norm[norm == 0] = 1.
+    return np.asarray(D / norm, dtype=D.dtype)
 
 
 class ConvCnstrMODSliceBase(admm.ADMMEqual):
@@ -57,36 +76,32 @@ class ConvCnstrMODSliceBase(admm.ADMMEqual):
     hdrtxt_objfn = ('DFid', 'Cnstr')
     hdrval_objfun = {'DFid': 'DFid', 'Cnstr': 'Cnstr'}
 
-    def __init__(self, dinit, opt=None):
+    def __init__(self, Z, S, dsz=None, opt=None):
         """
         Initilize a ConvCnstrMODSliceBase object.
 
         Parameters
         ----------
-        dinit: ndarray
-            Initial value of the dictionary. The input dictionary should have
-            compatible size of [patch_h, patch_w, channels, num_atoms].
+        Z: array, shape (m, N)
+            Sparse coefficient array.
+        S: array, shape (n, N)
+            Signal array.
+        dsz: tuple or None
+            The size of the dictionary. If None, then derived from Z and S.
         opt: :class:`ConvCnstrMODSliceBase.Options` object
             Options for our algorithm.
         """
         if opt is None:
             opt = ConvCnstrMODSliceBase.Options()
-        # In our configuration the channel dimension comes before patch dim,
-        # so transpose and reshape the dictionary to 2D.
-        if dinit.ndim > 3:
-            assert dinit.shape[-2] == 1 or dinit.shape[-2] == 3
-            dinit = dinit.transpose(2, 0, 1, 3)
-        else:
-            # single channel dictionary. Insert channel dimension (1).
-            dinit = np.expand_dims(dinit, axis=-2)
-        self.dsz = dinit.shape
-        dinit = dinit.reshape(-1, dinit.shape[-1])
-        super().__init__(dinit.shape, dinit.dtype, opt)
-        self.Y = dinit.copy()
-        self.Pcn = getPcn(opt['ZeroMean'])
-        # signals and coefficients array
-        self.signals = None
-        self.coefs = None
+        if dsz is None:
+            dsz = (S.shape[0], Z.shape[0])
+        super().__init__(dsz, S.dtype, opt)
+        if Z is not None and S is not None:
+            self.setcoef(Z, S)
+
+    def Pcn(self, D):
+        """Constraint set projection function."""
+        return Pcn(D, self.opt['ZeroMean'])
 
     def ystep(self):
         self.Y = self.Pcn(self.AX + self.U)
@@ -94,13 +109,9 @@ class ConvCnstrMODSliceBase(admm.ADMMEqual):
     def getdict(self):
         return self.getmin()
 
-    def setcoef(self, coef_tuple):
-        self.signals = np.asarray(coef_tuple[0], dtype=self.dtype)
-        self.signals = self.signals.transpose((1, 0, 2))
-        self.signals = self.signals.reshape(self.signals.shape[0], -1)
-        self.coefs = np.asarray(coef_tuple[1], dtype=self.dtype)
-        self.coefs = self.coefs.transpose((1, 0, 2))
-        self.coefs = self.coefs.reshape(self.coefs.shape[0], -1)
+    def setcoef(self, coefs, signals):
+        self.coefs = coefs
+        self.signals = signals
 
     def eval_objfn(self):
         dfd = self.obfn_dfd()
@@ -131,13 +142,13 @@ class ConvCnstrMODSliceMOD(ConvCnstrMODSliceBase):
                 opt = {}
             super().__init__(opt)
 
-    def __init__(self, dinit, opt=None):
+    def __init__(self, Z, S, dsz=None, opt=None):
         if opt is None:
             opt = ConvCnstrMODSliceMOD.Options()
-        super().__init__(dinit, opt)
+        super().__init__(Z, S, dsz, opt)
 
-    def setcoef(self, coef_tuple):
-        super().setcoef(coef_tuple)
+    def setcoef(self, coefs, signals):
+        super().setcoef(coefs, signals)
         self.SZT = self.signals.dot(self.coefs.T)
         self.lu, self.piv = sl.lu_factor(self.coefs, self.rho)
         self.lu = np.asarray(self.lu, dtype=self.dtype)
@@ -201,12 +212,43 @@ class ConvBPDNSliceDictLearn(dictlrn.DictLearn):
         self.opt = opt
         self.xmethod = opt.xmethod
         self.dmethod = opt.dmethod
-        xstep = globals()[self.xmethod](D0, S, lmbda, opt['CBPDN'], dimK=dimK,
-                                        dimN=dimN)
-        dstep = globals()[self.dmethod](D0, opt['CCMOD'])
+
+        # normalize D0 before initialization of xstep
+        D0 = Pcn(D0, opt['CCMOD', 'ZeroMean'])
+        xstep = globals()[self.xmethod](D0, S, lmbda, opt['CBPDN'],
+                                        dimK=dimK, dimN=dimN)
+        Z0, S0 = xstep.getcoef()
+        Z0, S0 = self.align_shape_x2d(Z0), self.align_shape_x2d(S0)
+        dstep = globals()[self.dmethod](Z0, S0, None, opt['CCMOD'])
         isc = self.config_itstats()
 
         super().__init__(xstep, dstep, opt, isc)
+
+    def align_shape_x2d(self, tensor):
+        """Align tensor shape from xstep to dstep.
+        In specific, tensors returned by xstep is 3-D where feature axis
+        is at dim-1. Reshape the tensor to 2-D and feature axis to be dim-0.
+        """
+        tensor = tensor.transpose(1, 0, 2)
+        tensor = tensor.reshape(tensor.shape[0], -1)
+        return tensor
+
+    def align_shape_d2x(self, tensor):
+        """Align tensor shape from dstep to xstep.
+        Tensors used by dstep is 2-D whereas tensors in xstep is 3-D.
+        """
+        # recover batch dim from xstep
+        batch_size = self.xstep.cri.K
+        tensor = tensor.reshape(tensor.shape[0], batch_size, -1)
+        tensor = tensor.transpose(1, 0, 2)
+        return tensor
+
+    def post_xstep(self):
+        """Handle results from xstep to dstep."""
+        coefs, signals = self.xstep.getcoef()
+        coefs, signals = \
+            self.align_shape_x2d(coefs), self.align_shape_x2d(signals)
+        self.dstep.setcoef(coefs, signals)
 
     def config_itstats(self):
         """Config itstats output."""
@@ -253,7 +295,10 @@ class ConvBPDNSliceDictLearn(dictlrn.DictLearn):
         -------
         D: array, [patch_h, patch_w, channels, num_atoms]
         """
-        D = self.dstep.getdict().reshape(self.dstep.dsz)
+        D = self.dstep.getdict().copy()
+        patch_h, patch_w = self.xstep.cri.shpD[:2]
+        D = D.reshape(-1, patch_h, patch_w, D.shape[-1])
+        assert D.shape[0] == 1 or D.shape[0] == 3
         # transpose the channel dimension back
         D = D.transpose(1, 2, 0, 3)
         return D
@@ -262,6 +307,8 @@ class ConvBPDNSliceDictLearn(dictlrn.DictLearn):
         """Reconstruct representation."""
         if D is None:
             D = self.getdict()
+        elif D.ndim == 3:
+            D = np.expand_dims(D, axis=-2)
         if X is None:
             X = self.getcoef()
         # reshape to 2D representation
@@ -277,8 +324,8 @@ class ConvBPDNSliceDictLearn(dictlrn.DictLearn):
         """Evaluate functional value."""
         if self.opt['AccurateDFid']:
             D = self.dstep.getmin()
-            X = self.xstep.getmin()
-            recon = self.xstep.slices2im(D.dot(X))
+            X = self.xstep.X
+            recon = self.xstep.slices2im(np.matmul(D, X))
             dfd = ((recon - self.xstep.S) ** 2).sum() / 2.0
             reg = np.sum(np.abs(X))
             return dict(DFid=dfd, RegL1=reg, ObjFun=dfd+self.xstep.lmbda*reg)
