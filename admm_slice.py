@@ -16,7 +16,7 @@ from sporco.util import u
 logger = logging.getLogger(__name__)
 
 __all__ = ['ConvBPDNSlice', 'ConvBPDNSliceTwoBlockCnstrnt',
-           'ConvBPDNSliceMaskDcpl']
+           'ConvBPDNSliceMaskDcpl', 'ConvBPDNSlicePartial']
 
 
 def _pad_circulant_front(blob, pad_h, pad_w):
@@ -764,3 +764,63 @@ class ConvBPDNSlice(admm.ADMM):
         xstep_elapsed = self.extra_timer.elapsed('xstep')
         ystep_elapsed = self.extra_timer.elapsed('ystep')
         return (xstep_elapsed/niters, ystep_elapsed/niters)
+
+
+class ConvBPDNSlicePartial(ConvBPDNSlice):
+    """Upate only a portion of slices for every iteration. Not very useful.
+    """
+
+    class Options(ConvBPDNSlice.Options):
+        defaults = copy.deepcopy(ConvBPDNSlice.Options.defaults)
+        defaults.update({
+            'MaxSlices': 128
+        })
+
+        def __init__(self, opt=None):
+            if opt is None:
+                opt = {}
+            super().__init__(opt)
+
+    def __init__(self, D, S, lmbda=None, opt=None, dimK=None, dimN=2):
+        if opt is None:
+            opt = ConvBPDNSlicePartial.Options()
+        super().__init__(D, S, lmbda, opt, dimK, dimN)
+        self._num_slices = self.Y.shape[0] * self.Y.shape[-1]
+        self._batch_size = min(self.opt['MaxSlices'], self._num_slices)
+        self._current = 0
+        self._slice_idx = np.random.permutation(self._num_slices)
+
+    def get_next_batch(self):
+        """Returns the index for the next batch."""
+        if self._current + self._batch_size > self._num_slices:
+            self._slice_idx = np.random.permutation(self._num_slices)
+            self._current = 0
+        idx = self._slice_idx[self._current:self._current+self._batch_size]
+        self._current += self._batch_size
+        return idx
+
+    def xstep(self):
+        """Randomly choose max_slices number of slices to update."""
+        self.extra_timer.start('xstep')
+        signal = self.Y - self.U
+        signal = signal.transpose((1, 0, 2))
+        # [K, n, N] -> [n, K, N] -> [n, K*N]
+        signal = signal.reshape(signal.shape[0], -1)
+        selected = self.get_next_batch()
+        if not hasattr(self, '_X_bpdn_cache'):
+            self._X_bpdn_cache = np.zeros(
+                (self.D.shape[1], signal.shape[-1]), dtype=self.dtype
+            )
+        signal = signal[:, selected]
+        opt = copy.deepcopy(self.opt['BPDN'])
+        opt['Y0'] = self._X_bpdn_cache[:, selected]
+        solver = bpdn.BPDN(self.D, signal, lmbda=self.lmbda/self.rho, opt=opt)
+        X = solver.solve()
+        self._X_bpdn_cache[:, selected] = X
+        self.X = self.X.transpose(1, 0, 2)
+        self.X = self.X.reshape(self.X.shape[0], -1)
+        self.X[:, selected] = X
+        self.X = self.X.reshape(
+            self.X.shape[0], self.Y.shape[0], self.Y.shape[2]
+        ).transpose(1, 0, 2)
+        self.extra_timer.stop('xstep')
