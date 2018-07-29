@@ -11,6 +11,7 @@ import sporco.linalg as sl
 from sporco.util import u
 from sporco import common, cdict
 from sporco.dictlrn import dictlrn
+from sporco.admm import cbpdn
 
 from dictlrn_slice import Pcn
 from im2slices import im2slices, slices2im
@@ -107,6 +108,12 @@ class OnlineSliceDictLearn(with_metaclass(dictlrn._DictLearn_Meta,
             'AccurateDFid': False, 'Boundary': 'circulant_back',
             'BatchSize': 32, 'DataType': None, 'IterPerSignal': -1,
             'CBPDN': {
+                'Verbose': False, 'MaxMainIter': 50,
+                'AutoRho': {'Enabled': False}, 'AuxVarObj': False,
+                'RelStopTol': 1e-7, 'DataType': None,
+                'FastSolve': True
+            },
+            'FISTA': {
                 'L': 1., 'BackTrack': {'Enabled': False},
             },
             'CCMOD': {
@@ -117,9 +124,12 @@ class OnlineSliceDictLearn(with_metaclass(dictlrn._DictLearn_Meta,
         }
 
         def __init__(self, opt=None):
+            super().__init__(
+                {'CBPDN': cbpdn.ConvBPDN.Options(self.defaults['CBPDN'])}
+            )
             if opt is None:
                 opt = {}
-            super().__init__(opt)
+            self.update(opt)
 
     def __new__(cls, *args, **kwargs):
         instance = super(OnlineSliceDictLearn, cls).__new__(cls)
@@ -157,28 +167,36 @@ class OnlineSliceDictLearn(with_metaclass(dictlrn._DictLearn_Meta,
         # [Cin, Hc, Wc, Cout]; channel first
         self.D = self.D.squeeze(-2).transpose(2, 0, 1, 3)
         self.D = self.D.reshape(-1, self.D.shape[-1])
+        self.header_printed = False
 
-    def xinit(self, N=None):
-        if N is None:
-            N = self.Sval.shape[0]
-        return np.zeros((N, self.D.shape[-1], self.Sval_slice.shape[-1]),
-                        dtype=self.dtype)
+    def xinit(self, S):
+        init = cbpdn.ConvBPDN(self.getdict().squeeze(), S, self.lmbda,
+                              self.opt['CBPDN'])
+        init.solve()
+        # (H, W, 1, K, M)
+        X = init.getcoef()
+        assert X.shape[2] == 1
+        X = X.reshape(-1, X.shape[-2], X.shape[-1])
+        X = X.transpose(1, 2, 0)
+        return X
 
     def solve(self, S):
         """Solve for given signal S."""
-        if self.opt['Verbose'] and self.opt['StatusHeader']:
+        if self.opt['Verbose'] and self.opt['StatusHeader'] and \
+                not self.header_printed:
             self.isc.printheader()
+            self.header_printed = True
 
         self.timer.start(['solve', 'solve_wo_eval'])
 
         cri = cr.CDU_ConvRepIndexing(self.dsz, S)
         S = np.asarray(S.reshape(cri.shpS), dtype=self.dtype)
-        S = S.squeeze(-1).transpose(3, 2, 0, 1)
 
-        X = self.xinit(S.shape[0])
-        Y = np.zeros_like(X)
+        X = self.xinit(S)
+        Y = X.copy()
         G = self.D.copy()
         D = self.D.copy()
+        S = S.squeeze(-1).transpose(3, 2, 0, 1)
         tx = td = 1.
 
         # MaxMainIter gives no of iterations for each sample.
@@ -187,7 +205,7 @@ class OnlineSliceDictLearn(with_metaclass(dictlrn._DictLearn_Meta,
             Xprev, Dprev = X.copy(), D.copy()
 
             Y, X, G, D, td = self.step(S, Y, X, G, D, tx, td,
-                                       self.opt['CBPDN', 'L'],
+                                       self.opt['FISTA', 'L'],
                                        self.opt['CCMOD', 'L'])
             tx = (1 + np.sqrt(1 + 4 * tx ** 2)) / 2.
 
@@ -199,7 +217,7 @@ class OnlineSliceDictLearn(with_metaclass(dictlrn._DictLearn_Meta,
             reg = linalg.norm(Y.ravel(), 1)
             obj = dfd + self.lmbda * reg
             cnstr = linalg.norm(self.dprox(G) - G)
-            dtx = {'L': self.opt['CBPDN', 'L'], 'Rsdl': X_Rsdl,
+            dtx = {'L': self.opt['FISTA', 'L'], 'Rsdl': X_Rsdl,
                    'F_Btrack': None, 'Q_Btrack': None, 'IterBTrack': None}
             dtd = {'L': self.opt['CCMOD', 'L'], 'Rsdl': D_Rsdl, 'Cnstr': cnstr,
                    'F_Btrack': None, 'IterBTrack': None, 'Q_Btrack': None}
@@ -245,9 +263,9 @@ class OnlineSliceDictLearn(with_metaclass(dictlrn._DictLearn_Meta,
                 idx = np.random.permutation(rsdl_slice.shape[-1])
                 cur_idx = 0
             cur = idx[cur_idx:cur_idx+self.opt['BatchSize']]
-            Ynew, Xnew = self.xstep(Y[..., cur], X[..., cur], G,
-                                    rsdl_slice[..., cur], tx, Lx)
             Gnew, Dnew = self.dstep(G, D, Y[..., cur], rsdl_slice[..., cur], td, Ld)
+            Ynew, Xnew = self.xstep(Y[..., cur], X[..., cur], Gnew,
+                                    rsdl_slice[..., cur], tx, Lx)
             Y[..., cur] = Ynew
             X[..., cur] = Xnew
             G = Gnew
@@ -291,7 +309,7 @@ class OnlineSliceDictLearn(with_metaclass(dictlrn._DictLearn_Meta,
         """Config itstats output for fista."""
         # isfld
         isfld = ['Iter', 'ObjFun', 'DFid', 'RegL1', 'Cnstr']
-        if self.opt['CBPDN', 'BackTrack', 'Enabled']:
+        if self.opt['FISTA', 'BackTrack', 'Enabled']:
             isfld.extend(['X_F_Btrack', 'X_Q_Btrack', 'X_ItBt', 'X_L',
                           'X_Rsdl'])
         else:
@@ -310,7 +328,7 @@ class OnlineSliceDictLearn(with_metaclass(dictlrn._DictLearn_Meta,
                   'D_L': 'L', 'D_Rsdl': 'Rsdl'}
         # hdrtxt
         hdrtxt = ['Itn', 'Fnc', 'DFid', u('ℓ1'), 'Cnstr']
-        if self.opt['CBPDN', 'BackTrack', 'Enabled']:
+        if self.opt['FISTA', 'BackTrack', 'Enabled']:
             hdrtxt.extend(['F_X', 'Q_X', 'It_X', 'L_X'])
         else:
             hdrtxt.append('L_X')
@@ -321,7 +339,7 @@ class OnlineSliceDictLearn(with_metaclass(dictlrn._DictLearn_Meta,
         # hdrmap
         hdrmap = {'Itn': 'Iter', 'Fnc': 'ObjFun', 'DFid': 'DFid',
                   u('ℓ1'): 'RegL1', 'Cnstr': 'Cnstr'}
-        if self.opt['CBPDN', 'BackTrack', 'Enabled']:
+        if self.opt['FISTA', 'BackTrack', 'Enabled']:
             hdrmap.update({'F_X': 'X_F_Btrack', 'Q_X': 'X_Q_Btrack',
                            'It_X': 'X_ItBt', 'L_X': 'X_L'})
         else:
