@@ -106,7 +106,7 @@ class OnlineSliceDictLearn(with_metaclass(dictlrn._DictLearn_Meta,
             'Verbose': True, 'StatusHeader': True, 'IterTimer': 'solve',
             'MaxMainIter': 1000, 'Callback': None,
             'AccurateDFid': False, 'Boundary': 'circulant_back',
-            'BatchSize': 32, 'DataType': None, 'IterPerSignal': -1,
+            'BatchSize': 32, 'DataType': None, 'StepIter': -1,
             'CBPDN': {
                 'Verbose': False, 'MaxMainIter': 50,
                 'AutoRho': {'Enabled': False}, 'AuxVarObj': False,
@@ -167,7 +167,9 @@ class OnlineSliceDictLearn(with_metaclass(dictlrn._DictLearn_Meta,
         # [Cin, Hc, Wc, Cout]; channel first
         self.D = self.D.squeeze(-2).transpose(2, 0, 1, 3)
         self.D = self.D.reshape(-1, self.D.shape[-1])
-        self.header_printed = False
+
+        if self.opt['Verbose'] and self.opt['StatusHeader']:
+            self.isc.printheader()
 
     def xinit(self, S):
         init = cbpdn.ConvBPDN(self.getdict().squeeze(), S, self.lmbda,
@@ -182,10 +184,6 @@ class OnlineSliceDictLearn(with_metaclass(dictlrn._DictLearn_Meta,
 
     def solve(self, S):
         """Solve for given signal S."""
-        if self.opt['Verbose'] and self.opt['StatusHeader'] and \
-                not self.header_printed:
-            self.isc.printheader()
-            self.header_printed = True
 
         self.timer.start(['solve', 'solve_wo_eval'])
 
@@ -204,10 +202,11 @@ class OnlineSliceDictLearn(with_metaclass(dictlrn._DictLearn_Meta,
 
             Xprev, Dprev = X.copy(), D.copy()
 
-            Y, X, G, D, td = self.step(S, Y, X, G, D, tx, td,
-                                       self.opt['FISTA', 'L'],
-                                       self.opt['CCMOD', 'L'])
+            Y, X, G, D, tx, td = self.step(S, Y, X, G, D, tx, td,
+                                           self.opt['FISTA', 'L'],
+                                           self.opt['CCMOD', 'L'])
             tx = (1 + np.sqrt(1 + 4 * tx ** 2)) / 2.
+            td = (1 + np.sqrt(1 + 4 * td ** 2)) / 2.
 
             self.timer.stop('solve_wo_eval')
             X_Rsdl = linalg.norm(Y - Xprev)
@@ -227,6 +226,9 @@ class OnlineSliceDictLearn(with_metaclass(dictlrn._DictLearn_Meta,
                 evl = None
             self.timer.start('solve_wo_eval')
 
+            self.D = G
+            self.X = Y
+
             t = self.timer.elapsed(self.opt['IterTimer'])
             itst = self.isc.iterstats(self.j, t, dtx, dtd, evl)
 
@@ -237,10 +239,12 @@ class OnlineSliceDictLearn(with_metaclass(dictlrn._DictLearn_Meta,
                 if self.opt['Callback'](self):
                     break
 
-        self.j += 1
+            if 0:
+                import matplotlib.pyplot as plt
+                plt.imshow(su.tiledict(self.getdict().squeeze()))
+                plt.show()
 
-        self.D = G
-        self.X = Y
+        self.j += 1
 
         self.timer.stop(['solve', 'solve_wo_eval'])
 
@@ -253,16 +257,34 @@ class OnlineSliceDictLearn(with_metaclass(dictlrn._DictLearn_Meta,
         """Step for one iteration for given signal S."""
         recon = self.slices2im(np.matmul(G, Y))
         rsdl_slice = self.im2slices(recon - S)
+        K = rsdl_slice.shape[0]
+
+        def _rshp_3d_2d(blob):
+            blob = blob.transpose(1, 0, 2)
+            blob = blob.reshape(blob.shape[0], -1)
+            return blob
+
+        def _rshp_2d_3d(blob, K):
+            blob = blob.reshape(blob.shape[0], K, -1)
+            blob = blob.transpose(1, 0, 2)
+            return blob
+
+        # reshape from 3d blob (K, n/m, N) to (n/m, K*N)
+        X = _rshp_3d_2d(X)
+        Y = _rshp_3d_2d(Y)
+        rsdl_slice = _rshp_3d_2d(rsdl_slice)
+
         idx = np.random.permutation(rsdl_slice.shape[-1])
         cur_idx = 0
-        num_iter = self.opt['IterPerSignal']
+        batch_size = min(self.opt['BatchSize'], len(idx))
+        num_iter = self.opt['StepIter']
         if num_iter < 0:
-            num_iter = len(idx) // self.opt['BatchSize']
+            num_iter = len(idx) // batch_size
         for _ in range(num_iter):
-            if cur_idx + self.opt['BatchSize'] > len(idx):
+            if cur_idx + batch_size > len(idx):
                 idx = np.random.permutation(rsdl_slice.shape[-1])
                 cur_idx = 0
-            cur = idx[cur_idx:cur_idx+self.opt['BatchSize']]
+            cur = idx[cur_idx:cur_idx+batch_size]
             Gnew, Dnew = self.dstep(G, D, Y[..., cur], rsdl_slice[..., cur], td, Ld)
             Ynew, Xnew = self.xstep(Y[..., cur], X[..., cur], Gnew,
                                     rsdl_slice[..., cur], tx, Lx)
@@ -270,9 +292,12 @@ class OnlineSliceDictLearn(with_metaclass(dictlrn._DictLearn_Meta,
             X[..., cur] = Xnew
             G = Gnew
             D = Dnew
-            td = (1 + np.sqrt(1 + 4 * td ** 2)) / 2.
-            cur_idx += self.opt['BatchSize']
-        return Y, X, G, D, td
+            cur_idx += batch_size
+
+        # reshape back from 2d blob (n/m, K*N) to 3d (K, n/m, N)
+        X = _rshp_2d_3d(X, K)
+        Y = _rshp_2d_3d(Y, K)
+        return Y, X, G, D, tx, td
 
     def xstep(self, Y, X, D, rsdl_slice, tx, Lx):
         """Do one step of FISTA on X."""
