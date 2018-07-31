@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """Online version of slice based CDL with FISTA solver."""
+import copy
 import collections
 import logging
 from future.utils import with_metaclass
@@ -12,6 +13,7 @@ from sporco.util import u
 from sporco import common, cdict
 from sporco.dictlrn import dictlrn
 from sporco.admm import cbpdn
+from sporco.fista import fista
 
 from dictlrn_slice import Pcn
 from im2slices import im2slices, slices2im
@@ -96,6 +98,230 @@ class IterStatsConfig(object):
     def print_func(self, s):
         """Print function."""
         print(s)
+
+
+class OnlineSliceDictLearn2nd(with_metaclass(dictlrn._DictLearn_Meta,
+                                             common.BasicIterativeSolver)):
+    r"""Stochastic Approximation based online convolutional dictionary
+    learning.
+    """
+
+    class Options(cdict.ConstrainedDict):
+        defaults = {
+            'Verbose': True, 'StatusHeader': True, 'IterTimer': 'solve',
+            'MaxMainIter': 1000, 'Callback': None,
+            'AccurateDFid': False, 'Boundary': 'circulant_back',
+            'BatchSize': 32, 'DataType': None, 'StepIter': -1,
+            'CBPDN': {
+                'Verbose': False, 'MaxMainIter': 50,
+                'AutoRho': {'Enabled': False}, 'AuxVarObj': False,
+                'RelStopTol': 1e-7, 'DataType': None,
+                'FastSolve': True
+            },
+            'OCDL': {
+
+            }
+        }
+
+        def __init__(self, opt=None):
+            super().__init__(
+                {'CBPDN': cbpdn.ConvBPDN.Options(self.defaults['CBPDN'])}
+            )
+            if opt is None:
+                opt = {}
+            self.update(opt)
+
+    def __new__(cls, *args, **kwargs):
+        instance = super(OnlineSliceDictLearn2nd, cls).__new__(cls)
+        instance.timer = su.Timer(['init', 'solve', 'solve_wo_eval',
+                                   'xstep', 'dstep'])
+        instance.timer.start('init')
+        return instance
+
+    def __init__(self, D0, S0, lmbda=None, opt=None, dimK=1, dimN=2):
+        """Internally we use a 7-dim representation over blobs. This increases
+        the spatial dimension of 2 to 4 to allow for extra dimensions for
+        slices.
+        -------------------------------------------------------------------
+        blob     | spatial                                ,chn  ,sig  ,fil
+        -------------------------------------------------------------------
+        S        |  (H      ,  W      ,  1      ,  1      ,  C  ,  K  ,  1)
+        D        |  (Hc     ,  Wc     ,  1      ,  1      ,  C  ,  1  ,  M)
+        X        |  (H      ,  W      ,  1      ,  1      ,  1  ,  K  ,  M)
+        Omega    |  (Hc     ,  Wc     ,  2Hc-1  ,  2Wc-1  ,  C  ,  1  ,  M)
+        At       |  (2Hc-1  ,  2Wc-1  ,  1      ,  1      ,  C  ,  M  ,  M)
+        Bt       |  (Hc     ,  Wc     ,  1      ,  1      ,  C  ,  1  ,  M)
+        patches  |  (H      ,  W      ,  Hc     ,  Wc     ,  C  ,  K  ,  1)
+        gamma    |  (H      ,  W      ,  2Hc-1  ,  2Wc-1  ,  1  ,  K  ,  M)
+        -------------------------------------------------------------------
+
+        """
+        if opt is None:
+            opt = OnlineSliceDictLearn2nd.Options()
+        assert isinstance(opt, OnlineSliceDictLearn2nd.Options)
+        self.opt = opt
+
+        self.set_dtype(opt, S0.dtype)
+
+        # insert extra dims
+        D0 = D0[:, :, np.newaxis, np.newaxis, ...]
+        S0 = S0[:, :, np.newaxis, np.newaxis, ...]
+
+        assert dimN == 2
+        self.cri = cr.CSC_ConvRepIndexing(D0, S0, dimK=None, dimN=4)
+
+        self.isc = self.config_itstats()
+        self.itstat = []
+        self.j = 0
+
+        self.set_attr('lmbda', lmbda, dtype=self.dtype)
+        self.set_attr('boundary', opt['Boundary'], dval='circulant_back')
+
+        D0 = Pcn(D0, opt['OCDL', 'ZeroMean'])
+        self.setdict(D0)
+
+        self.S0 = np.asarray(S0.reshape(self.cri.shpS), dtype=self.dtype)
+
+        if self.opt['Verbose'] and self.opt['StatusHeader']:
+            self.isc.printheader()
+
+    def xinit(self, S):
+        """Initialize sparse representation with CBPDN."""
+        init = cbpdn.ConvBPDN(self.getdict().squeeze(), S, self.lmbda,
+                              self.opt['CBPDN'])
+        init.solve()
+        return np.asarray(init.getcoef().reshape(self.cri.shpX),
+                          dtype=self.dtype)
+
+    def solve(self, S):
+        """Solve for given signal S."""
+
+        self.timer.start(['solve', 'solve_wo_eval'])
+
+        # Initialize with CBPDN
+        X = self.xinit(S)
+
+        S = S[:, :, np.newaxis, np.newaxis, ...]
+        cri = cr.CSC_ConvRepIndexing(self.D, S, dimN=4)
+
+        # update At and Bt
+        self.update_hessian(X)
+
+        # update dictionary with FISTA
+
+
+
+
+
+
+        self.j += 1
+
+        self.timer.stop(['solve', 'solve_wo_eval'])
+
+        if self.opt['Verbose'] and self.opt['StatusHeader']:
+            self.isc.printseparator()
+
+        return self.getdict()
+
+
+    def config_itstats(self):
+        raise NotImplementedError
+
+    def getdict(self):
+        raise NotImplementedError
+
+    def setdict(self, D=None):
+        """Set dictionary properly."""
+        raise NotImplementedError
+
+
+class StripeSliceFISTA(fista.FISTA):
+    r"""FISTA algorithm to solve for the dictionary, where the derivative is
+    given by
+
+    .. math::
+        \nabla_D f = \Omega At - Bt,
+
+    where :math:`\Omega` is the stripe dictionary.
+    """
+
+    class Options(fista.FISTA.Options):
+        defaults = copy.deepcopy(fista.FISTA.Options.defaults)
+        defaults.update({
+            'ZeroMean': True
+        })
+
+        def __init__(self, opt=None):
+            if opt is None:
+                opt = {}
+            super().__init__(opt)
+
+    itstat_fields_objfn = ('Cnstr', )
+    hdrtxt_objfn = ('Cnstr', )
+    hdrval_objfun = {'Cnstr': 'Cnstr'}
+
+    def __init__(self, At, Bt, dsz=None, opt=None):
+        if opt is None:
+            opt = StripeSliceFISTA.Options()
+        if opt['X0'] is not None:
+            self.dsz = opt['X0'].shape
+        else:
+            self.dsz = dsz
+        super().__init__(np.prod(dsz), dsz, At.dtype, opt)
+        self.At = At
+        self.Bt = Bt
+        self.Y = self.X.copy()
+        self.osz = list(copy.deepcopy(self.dsz))
+        self.osz[2] = 2 * self.osz[0] - 1
+        self.osz[3] = 2 * self.osz[1] - 1
+
+    def get_Omega(self, D=None):
+        r"""Set the stripe dictionary :math:`\Omega` from D."""
+        # TODO(leoyolo): benchmark sanity.
+        if D is None:
+            D = self.Y
+        Omega = np.zeros(self.osz, dtype=self.dtype)
+        for ih, h in enumerate(range(-self.osz[0]+1, self.osz[0])):
+            for iw, w in enumerate(range(-self.osz[1]+1, self.osz[1])):
+                begh = -min(h, 0)
+                endh = self.osz[0] - max(h, 0)
+                begw = -min(w, 0)
+                endw = self.osz[1] - max(w, 0)
+                stripe_dict = D[begh:endh, begw:endw, 0, 0, ...]
+                begh_c = max(h, 0)
+                endh_c = min(self.osz[0] + h, self.osz[0])
+                begw_c = max(w, 0)
+                endw_c = min(self.osz[1] + w, self.osz[1])
+                Omega[begh_c:endh_c, begw_c:endw_c, ih, iw, ...] = stripe_dict
+        return Omega
+
+    def Pcn(self, D):
+        """Proximal function."""
+        return Pcn(D, self.opt['ZeroMean'])
+
+    def eval_grad(self):
+        r"""Evaluate the gradient:
+
+            .. ::math:
+                \nabla_D f = \Omega At - Bt
+        """
+        # TODO(leoyolo): np.einsum is slow.
+        self.Omega = self.get_Omega()
+        grad = np.einsum('ijklmno,klpqros->ijpqmns', self.Omega, self.At)
+        grad -= self.Bt
+        return grad
+
+    def eval_proxop(self, V):
+        return self.Pcn(V)
+
+    def rsdl(self):
+        """Fixed point residual."""
+        return linalg.norm(self.X - self.Yprv)
+
+    def eval_objfn(self):
+        """Eval constraint only."""
+        cnstr = linalg.norm(self.X - self.Pcn(self.X))
+        return (cnstr, )
 
 
 class OnlineSliceDictLearn(with_metaclass(dictlrn._DictLearn_Meta,
