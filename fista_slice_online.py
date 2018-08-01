@@ -12,13 +12,25 @@ import sporco.linalg as sl
 from sporco.util import u
 from sporco import common, cdict
 from sporco.dictlrn import dictlrn
+from sporco.dictlrn import common as dc
 from sporco.admm import cbpdn
 from sporco.fista import fista
+import torch
 
 from dictlrn_slice import Pcn
 from im2slices import im2slices, slices2im
 
 logger = logging.getLogger(__name__)
+
+
+def einsum(subscripts, operands):
+    """Wrapper around possible implementations of einsum."""
+    if 1:
+        out = np.einsum(subscripts, *operands)
+    else:
+        operands = [torch.from_numpy(o) for o in operands]
+        out = torch.einsum(subscripts, operands).numpy()
+    return out
 
 
 class IterStatsConfig(object):
@@ -112,21 +124,25 @@ class OnlineSliceDictLearn2nd(with_metaclass(dictlrn._DictLearn_Meta,
             'MaxMainIter': 1000, 'Callback': None,
             'AccurateDFid': False, 'Boundary': 'circulant_back',
             'BatchSize': 32, 'DataType': None, 'StepIter': -1,
-            'CBPDN': {
-                'Verbose': False, 'MaxMainIter': 50,
-                'AutoRho': {'Enabled': False}, 'AuxVarObj': False,
-                'RelStopTol': 1e-7, 'DataType': None,
-                'FastSolve': True
-            },
+            'CBPDN': copy.deepcopy(cbpdn.ConvBPDN.Options.defaults),
+            'CCMOD': copy.deepcopy(fista.FISTA.Options.defaults),
             'OCDL': {
+                'p': 1.,  # forgetting exponent
 
             }
         }
+        defaults['CBPDN'].update({
+            'Verbose': False, 'MaxMainIter': 50, 'AuxVarObj': False,
+            'RelStopTol': 1e-7, 'DataType': None, 'FastSolve': True,
+        })
+        defaults['CBPDN']['AutoRho'].update({'Enabled': False})
+        defaults['CCMOD']['BackTrack'].update({'Enabled': False})
 
         def __init__(self, opt=None):
-            super().__init__(
-                {'CBPDN': cbpdn.ConvBPDN.Options(self.defaults['CBPDN'])}
-            )
+            super().__init__({
+                'CBPDN': cbpdn.ConvBPDN.Options(self.defaults['CBPDN']),
+                'CCMOD': fista.FISTA.Options(self.defaults['CCMOD']),
+            })
             if opt is None:
                 opt = {}
             self.update(opt)
@@ -169,6 +185,8 @@ class OnlineSliceDictLearn2nd(with_metaclass(dictlrn._DictLearn_Meta,
 
         assert dimN == 2
         self.cri = cr.CSC_ConvRepIndexing(D0, S0, dimK=None, dimN=4)
+        self.osz = list(copy.deepcopy(self.cri.shpD))
+        self.osz[2], self.osz[3] = 2*self.osz[0]-1, 2*self.osz[1]-1
 
         self.isc = self.config_itstats()
         self.itstat = []
@@ -178,20 +196,18 @@ class OnlineSliceDictLearn2nd(with_metaclass(dictlrn._DictLearn_Meta,
         self.set_attr('boundary', opt['Boundary'], dval='circulant_back')
 
         D0 = Pcn(D0, opt['OCDL', 'ZeroMean'])
-        self.setdict(D0)
 
+        self.D = np.asarray(D0.reshape(self.cri.shpD), dtype=self.dtype)
         self.S0 = np.asarray(S0.reshape(self.cri.shpS), dtype=self.dtype)
+        self.At = None
+        self.Bt = None
+
+        self.lmbda = self.dtype.type(lmbda)
+        self.Lmbda = self.dtype.type(0.)
+        self.p = self.dtype.type(self.opt['OCDL', 'p'])
 
         if self.opt['Verbose'] and self.opt['StatusHeader']:
             self.isc.printheader()
-
-    def xstep(self, S):
-        """Initialize sparse representation with CBPDN."""
-        init = cbpdn.ConvBPDN(self.getdict().squeeze(), S, self.lmbda,
-                              self.opt['CBPDN'])
-        init.solve()
-        return np.asarray(init.getcoef().reshape(self.cri.shpX),
-                          dtype=self.dtype)
 
     def solve(self, S):
         """Solve for given signal S."""
@@ -199,27 +215,37 @@ class OnlineSliceDictLearn2nd(with_metaclass(dictlrn._DictLearn_Meta,
         self.timer.start(['solve', 'solve_wo_eval'])
 
         # Initialize with CBPDN
-        X = self.xstep(S)
-
-        S = S[:, :, np.newaxis, np.newaxis, ...]
-        cri = cr.CSC_ConvRepIndexing(self.D, S, dimN=4)
+        xstep = cbpdn.ConvBPDN(self.getdict(), S, self.lmbda,
+                               opt=self.opt['CBPDN'])
+        xstep.solve()
+        X = np.asarray(xstep.getcoef().reshape(self.cri.shpX), dtype=self.dtype)
 
         # update At and Bt
-        self.update_hessian(X)
+        patches = self.im2slices(S)
+        self.update_At(X)
+        self.update_Bt(X, patches)
+        self.Lmbda = self.dtype.type(self.alpha*self.Lmbda+1)
 
         # update dictionary with FISTA
-        fopt = copy.deepcopy(self.opt['FISTA'])
-        fopt['X0'].udpate(self.D)
+        fopt = copy.deepcopy(self.opt['CCMOD'])
+        fopt['X0'] = self.D
         dstep = StripeSliceFISTA(self.At, self.Bt, opt=fopt)
         dstep.solve()
 
         # set dictionary
         self.setdict(dstep.getmin())
 
+        self.timer.stop('solve_wo_eval')
+        evl = self.evaluate()
+        self.timer.start('solve_wo_eval')
 
+        t = self.time.elapsed(self.opt['IterTimer'])
+        itst = self.isc.iterstats(self.j, t, xstep.itstat[-1], dstep.itstat[-1],
+                                  evl)
+        self.itstat.append(itstat)
 
-
-
+        if self.opt['Verbose']:
+            self.isc.printiterstats(itst)
 
         self.j += 1
 
@@ -230,20 +256,110 @@ class OnlineSliceDictLearn2nd(with_metaclass(dictlrn._DictLearn_Meta,
 
         return self.getdict()
 
-
     def config_itstats(self):
-        raise NotImplementedError
+        xmethod = 'admm'
+        dmethod = 'fista'
+        opt = self.opt
+        isc = dictlrn.IterStatsConfig(
+            isfld=dc.isfld(xmethod, dmethod, opt),
+            isxmap=dc.isxmap(xmethod, opt),
+            isdmap=dc.isdmap(dmethod),
+            evlmap=dc.evlmap(opt['AccurateDFid']),
+            hdrtxt=dc.hdrtxt(xmethod, dmethod, opt),
+            hdrmap=dc.hdrmap(xmethod, dmethod, opt),
+            fmtmap={'It_X': '%4d', 'It_D': '%4d'}
+        )
+        return isc
 
     def getdict(self):
-        raise NotImplementedError
+        """getdict() returns a squeezed version of internal dictionary."""
+        return self.D.squeeze()
 
     def setdict(self, D=None):
         """Set dictionary properly."""
-        raise NotImplementedError
+        self.D = np.asarray(D.reshape(self.cri.shpD), dtype=self.dtype)
 
-    def update_hessian(self, X):
-        """Update At and Bt."""
-        raise NotImplementedError
+    def update_At(self, X):
+        r"""Update At. At is computed as following:
+
+        .. math::
+            At = \sum \gamma_i x_i^T.
+
+        """
+        gamma = self.stripe_slice(X)
+        Lmbda_new = self.dtype.type(self.alpha*self.Lmbda+1)
+        new = einsum('ijklmno,ijpqrns->klpqmos', (gamma, X))
+        self.At = np.asarray(
+            (self.At*self.alpha*self.Lmbda+new) * (1./Lmbda_new),
+            dtype=self.dtype
+        )
+
+    def update_Bt(self, X, patches):
+        r"""Update Bt. Bt is computed as following:
+
+        .. math::
+            Bt = \sum s_i x_i^T.
+
+        """
+        Lmbda_new = self.dtype.type(self.alpha*self.Lmbda+1)
+        new = einsum('ijklmno,ijpqrns->klpqmos', (patches, X))
+        self.Bt = np.asarray(
+            (self.Bt*self.alpha*self.Lmbda+new) * (1./Lmbda_new),
+            dtype=self.dtype
+        )
+
+    def stripe_slice(self, X):
+        r"""Construct stripe slice (:math:`\gamma`) from sparse code X."""
+        def _shift_tensor(tensor, sh, sw):
+            """Shift the tensor by (sh, sw). `Shift` means move the tensor
+            to the desired direction, and pad the tensor with circulant values.
+            When the shift value is positive, this means that the tensor is
+            shifted to the right (or bottom), where the other side is padded
+            with values of the right (or bottom)."""
+            pad = [(max(sh, 0), min(-sh, 0)), (max(sw, 0), min(-sw, 0))]
+            pad.extend([(0, 0) for _ in range(tensor.ndim-2)])
+            Xp = np.pad(tensor, pad, 'wrap')
+            anchor = (min(-sh, 0), min(-sw, 0))
+            H, W = tensor.shape[:2]
+            Xp = Xp[anchor[0]:anchor[0]+H, anchor[1]:anchor[1]+W, ...]
+            return Xp
+
+        sz = list(copy.deepcopy(X.shape))
+        sz[2], sz[3] = self.osz[2], self.osz[3]
+        slices = np.zeros(sz, dtype=self.dtype)
+        for ih, h in enumerate(range(-self.osz[0]+1, self.osz[0])):
+            for iw, w in enumerate(range(-self.osz[1]+1, self.osz[1])):
+                # NOTE:
+                # for each stripe slice
+                # gamma = [x_{i-n+1}, ..., x_i, ..., x_{i+n-1}],
+                # at the same spatial location, the tensors shifted to the
+                # right is to the left at the slice location.
+                Xs = _shift_tensor(X, -h, -w)
+                slices[:, :, ih, iw, ...] = Xs[:, :, 0, 0, ...]
+        return slices
+
+    def im2slices(self, S):
+        """Convert signals to patches."""
+        kernel_h, kernel_w = self.cri.shpD[:2]
+        if self.cri.C == 1:
+            S = S.squeeze().transpose(2, 0, 1)[:, np.newaxis, :, :]
+        else:
+            assert S.shape[self.cri.dimC] == self.cri.C
+            S = S.transpose(3, 2, 0, 1)
+        # [K, C*Hc*Wc, H*W]
+        slices = im2slices(S, kernel_h, kernel_w, self.boundary)
+        shp = [slices.shape[0], self.cri.dimC, kernel_h, kernel_w] + \
+            self.cri.Nv + [1]
+        slices = slices.reshape(shp)
+        slices = np.moveaxis(slices, 1, 4)
+        return slices
+
+    @property
+    def alpha(self):
+        """Forgetting factor."""
+        # j starts from 0
+        alpha = self.dtype.type(pow(1.-1./(self.j+1.), self.p))
+        return alpha
 
 
 class StripeSliceFISTA(fista.FISTA):
@@ -318,8 +434,7 @@ class StripeSliceFISTA(fista.FISTA):
                 \nabla_D f = \Omega At - Bt
         """
         self.set_Omega()
-        grad = np.einsum('ijklmno,klpqros->ijpqmns', self.Omega, self.At,
-                         optimize=False)
+        grad = einsum('ijklmno,klpqros->ijpqmns', (self.Omega, self.At))
         grad -= self.Bt
         return grad
 
