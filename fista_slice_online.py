@@ -316,10 +316,10 @@ class OnlineSliceDictLearn2nd(with_metaclass(dictlrn._DictLearn_Meta,
             When the shift value is positive, this means that the tensor is
             shifted to the right (or bottom), where the other side is padded
             with values of the right (or bottom)."""
-            pad = [(max(sh, 0), min(-sh, 0)), (max(sw, 0), min(-sw, 0))]
+            pad = [(max(sh, 0), max(-sh, 0)), (max(sw, 0), max(-sw, 0))]
             pad.extend([(0, 0) for _ in range(tensor.ndim-2)])
             Xp = np.pad(tensor, pad, 'wrap')
-            anchor = (min(-sh, 0), min(-sw, 0))
+            anchor = (max(-sh, 0), max(-sw, 0))
             H, W = tensor.shape[:2]
             Xp = Xp[anchor[0]:anchor[0]+H, anchor[1]:anchor[1]+W, ...]
             return Xp
