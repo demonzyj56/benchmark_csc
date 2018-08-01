@@ -310,32 +310,16 @@ class OnlineSliceDictLearn2nd(with_metaclass(dictlrn._DictLearn_Meta,
 
     def stripe_slice(self, X):
         r"""Construct stripe slice (:math:`\gamma`) from sparse code X."""
-        def _shift_tensor(tensor, sh, sw):
-            """Shift the tensor by (sh, sw). `Shift` means move the tensor
-            to the desired direction, and pad the tensor with circulant values.
-            When the shift value is positive, this means that the tensor is
-            shifted to the right (or bottom), where the other side is padded
-            with values of the right (or bottom)."""
-            pad = [(max(sh, 0), max(-sh, 0)), (max(sw, 0), max(-sw, 0))]
-            pad.extend([(0, 0) for _ in range(tensor.ndim-2)])
-            Xp = np.pad(tensor, pad, 'wrap')
-            anchor = (max(-sh, 0), max(-sw, 0))
-            H, W = tensor.shape[:2]
-            Xp = Xp[anchor[0]:anchor[0]+H, anchor[1]:anchor[1]+W, ...]
-            return Xp
-
+        Hc, Wc = self.cri.shpD[:2]
         sz = list(copy.deepcopy(X.shape))
-        sz[2], sz[3] = self.osz[2], self.osz[3]
-        slices = np.zeros(sz, dtype=self.dtype)
-        for ih, h in enumerate(range(-self.osz[0]+1, self.osz[0])):
-            for iw, w in enumerate(range(-self.osz[1]+1, self.osz[1])):
-                # NOTE:
-                # for each stripe slice
-                # gamma = [x_{i-n+1}, ..., x_i, ..., x_{i+n-1}],
-                # at the same spatial location, the tensors shifted to the
-                # right is to the left at the slice location.
-                Xs = _shift_tensor(X, -h, -w)
-                slices[:, :, ih, iw, ...] = Xs[:, :, 0, 0, ...]
+        sz[2], sz[3] = 2*Hc-1, 2*Wc-1
+        slices = np.zeros(sz, dtype=X.dtype)
+        pad = [(Hc-1, Hc-1), (Wc-1, Wc-1)] + [(0, 0) for _ in range(X.ndim-2)]
+        Xp = np.pad(X, pad, 'wrap')
+        for h in range(X.shape[0]):
+            for w in range(X.shape[1]):
+                gamma = Xp[h:h+sz[2], w:w+sz[3], 0, 0, ...]  # 5D
+                slices[h, w, ...] = gamma
         return slices
 
     def im2slices(self, S):
