@@ -185,7 +185,7 @@ class OnlineSliceDictLearn2nd(with_metaclass(dictlrn._DictLearn_Meta,
         if self.opt['Verbose'] and self.opt['StatusHeader']:
             self.isc.printheader()
 
-    def xinit(self, S):
+    def xstep(self, S):
         """Initialize sparse representation with CBPDN."""
         init = cbpdn.ConvBPDN(self.getdict().squeeze(), S, self.lmbda,
                               self.opt['CBPDN'])
@@ -199,7 +199,7 @@ class OnlineSliceDictLearn2nd(with_metaclass(dictlrn._DictLearn_Meta,
         self.timer.start(['solve', 'solve_wo_eval'])
 
         # Initialize with CBPDN
-        X = self.xinit(S)
+        X = self.xstep(S)
 
         S = S[:, :, np.newaxis, np.newaxis, ...]
         cri = cr.CSC_ConvRepIndexing(self.D, S, dimN=4)
@@ -208,6 +208,13 @@ class OnlineSliceDictLearn2nd(with_metaclass(dictlrn._DictLearn_Meta,
         self.update_hessian(X)
 
         # update dictionary with FISTA
+        fopt = copy.deepcopy(self.opt['FISTA'])
+        fopt['X0'].udpate(self.D)
+        dstep = StripeSliceFISTA(self.At, self.Bt, opt=fopt)
+        dstep.solve()
+
+        # set dictionary
+        self.setdict(dstep.getmin())
 
 
 
@@ -232,6 +239,10 @@ class OnlineSliceDictLearn2nd(with_metaclass(dictlrn._DictLearn_Meta,
 
     def setdict(self, D=None):
         """Set dictionary properly."""
+        raise NotImplementedError
+
+    def update_hessian(self, X):
+        """Update At and Bt."""
         raise NotImplementedError
 
 
@@ -274,13 +285,14 @@ class StripeSliceFISTA(fista.FISTA):
         self.osz = list(copy.deepcopy(self.dsz))
         self.osz[2] = 2 * self.osz[0] - 1
         self.osz[3] = 2 * self.osz[1] - 1
+        self.Omega = np.zeros(self.osz, dtype=self.dtype)
 
-    def get_Omega(self, D=None):
+    def set_Omega(self, D=None):
         r"""Set the stripe dictionary :math:`\Omega` from D."""
         # TODO(leoyolo): benchmark sanity.
         if D is None:
             D = self.Y
-        Omega = np.zeros(self.osz, dtype=self.dtype)
+        self.Omega.fill(0.)
         for ih, h in enumerate(range(-self.osz[0]+1, self.osz[0])):
             for iw, w in enumerate(range(-self.osz[1]+1, self.osz[1])):
                 begh = -min(h, 0)
@@ -292,8 +304,8 @@ class StripeSliceFISTA(fista.FISTA):
                 endh_c = min(self.osz[0] + h, self.osz[0])
                 begw_c = max(w, 0)
                 endw_c = min(self.osz[1] + w, self.osz[1])
-                Omega[begh_c:endh_c, begw_c:endw_c, ih, iw, ...] = stripe_dict
-        return Omega
+                self.Omega[begh_c:endh_c, begw_c:endw_c, ih, iw, ...] = \
+                    stripe_dict
 
     def Pcn(self, D):
         """Proximal function."""
@@ -305,9 +317,9 @@ class StripeSliceFISTA(fista.FISTA):
             .. ::math:
                 \nabla_D f = \Omega At - Bt
         """
-        # TODO(leoyolo): np.einsum is slow.
-        self.Omega = self.get_Omega()
-        grad = np.einsum('ijklmno,klpqros->ijpqmns', self.Omega, self.At)
+        self.set_Omega()
+        grad = np.einsum('ijklmno,klpqros->ijpqmns', self.Omega, self.At,
+                         optimize=False)
         grad -= self.Bt
         return grad
 
