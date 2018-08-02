@@ -308,9 +308,11 @@ class OnlineSliceDictLearn2nd(with_metaclass(dictlrn._DictLearn_Meta,
         self.timer.start(['solve', 'solve_wo_eval'])
 
         # Initialize with CBPDN
+        self.timer.start('xstep')
         xstep = cbpdn.ConvBPDN(self.getdict(), S, self.lmbda,
                                opt=self.opt['CBPDN'])
         xstep.solve()
+        self.timer.stop('xstep')
         X = np.asarray(xstep.getcoef().reshape(self.cri.shpX), dtype=self.dtype)
 
         # update At and Bt
@@ -322,8 +324,10 @@ class OnlineSliceDictLearn2nd(with_metaclass(dictlrn._DictLearn_Meta,
         # update dictionary with FISTA
         fopt = copy.deepcopy(self.opt['CCMOD'])
         fopt['X0'] = self.D
+        self.timer.start('dstep')
         dstep = StripeSliceFISTA(self.At, self.Bt, opt=fopt)
         dstep.solve()
+        self.timer.stop('dstep')
 
         # set dictionary
         self.setdict(dstep.getmin())
@@ -347,19 +351,30 @@ class OnlineSliceDictLearn2nd(with_metaclass(dictlrn._DictLearn_Meta,
         return self.getdict()
 
     def config_itstats(self):
-        xmethod = 'admm'
-        dmethod = 'fista'
-        opt = self.opt
-        isc = dictlrn.IterStatsConfig(
-            isfld=dc.isfld(xmethod, dmethod, opt),
-            isxmap=dc.isxmap(xmethod, opt),
-            isdmap=dc.isdmap(dmethod),
-            evlmap=dc.evlmap(opt['AccurateDFid']),
-            hdrtxt=dc.hdrtxt(xmethod, dmethod, opt),
-            hdrmap=dc.hdrmap(xmethod, dmethod, opt),
-            fmtmap={'It_X': '%4d', 'It_D': '%4d'}
+        """Setup config fields."""
+        # NOTE: BackTrack is not implemented so always False.
+        isfld = ['Iter', 'ObjFun', 'DFid', 'RegL1',
+                 'XPrRsdl', 'XDlRsdl', 'XRho', 'X_It',
+                 'D_L', 'D_Rsdl', 'D_It', 'Time']
+        isxmap = {'XPrRsdl': 'PrimalRsdl', 'XDlRsdl': 'DualRsdl',
+                  'XRho': 'Rho', 'X_It': 'Iter'}
+        isdmap = {'D_L': 'L', 'D_Rsdl': 'Rsdl', 'D_It': 'Iter'}
+        hdrtxt = ['Itn', 'Fnc', 'DFid', u('ℓ1'),
+                  'Itn_X', 'r_X', 's_X', u('ρ_X'),
+                  'Itn_D', 'r_D', 'L_D']
+        hdrmap = {'Itn': 'Iter', 'Fnc': 'ObjFun', 'DFid': 'DFid',
+                  u('ℓ1'): 'RegL1', 'r_X': 'XPrRsdl', 's_X': 'XDlRsdl',
+                  u('ρ_X'): 'XRho', 'Itn_X': 'X_It',
+                  'r_D': 'D_Rsdl', 'L_D': 'D_L', 'Itn_D': 'D_It'}
+        if self.opt['AccurateDFid']:
+            evlmap = {'ObjFun': 'ObjFun', 'DFid': 'DFid', 'RegL1': 'RegL1'}
+        else:
+            evlmap = {}
+        return dictlrn.IterStatsConfig(
+            isfld=isfld, isxmap=isxmap, isdmap=isdmap, evlmap=evlmap,
+            hdrtxt=hdrtxt, hdrmap=hdrmap,
+            fmtmap={'Itn_X': '%4d', 'Itn_D': '%4d'}
         )
-        return isc
 
     def getdict(self):
         """getdict() returns a squeezed version of internal dictionary."""
