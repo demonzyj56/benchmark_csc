@@ -25,7 +25,7 @@ logger = logging.getLogger(__name__)
 
 def einsum(subscripts, operands):
     """Wrapper around possible implementations of einsum."""
-    if 1:
+    if 0:
         out = np.einsum(subscripts, *operands)
     else:
         operands = [torch.from_numpy(o) for o in operands]
@@ -287,8 +287,8 @@ class OnlineSliceDictLearn2nd(with_metaclass(dictlrn._DictLearn_Meta,
 
         self.D = np.asarray(D0.reshape(self.cri.shpD), dtype=self.dtype)
         self.S0 = np.asarray(S0.reshape(self.cri.shpS), dtype=self.dtype)
-        self.At = None
-        self.Bt = None
+        self.At = self.dtype.type(0.)
+        self.Bt = self.dtype.type(0.)
 
         self.lmbda = self.dtype.type(lmbda)
         self.Lmbda = self.dtype.type(0.)
@@ -299,6 +299,11 @@ class OnlineSliceDictLearn2nd(with_metaclass(dictlrn._DictLearn_Meta,
 
     def solve(self, S):
         """Solve for given signal S."""
+        self.cri = cr.CSC_ConvRepIndexing(
+            self.D.squeeze()[:, :, None, None, ...],
+            S[:, :, None, None, ...],
+            dimK=None, dimN=4
+        )
 
         self.timer.start(['solve', 'solve_wo_eval'])
 
@@ -327,10 +332,10 @@ class OnlineSliceDictLearn2nd(with_metaclass(dictlrn._DictLearn_Meta,
         evl = self.evaluate(S.reshape(self.cri.shpS), X)
         self.timer.start('solve_wo_eval')
 
-        t = self.time.elapsed(self.opt['IterTimer'])
+        t = self.timer.elapsed(self.opt['IterTimer'])
         itst = self.isc.iterstats(self.j, t, xstep.itstat[-1], dstep.itstat[-1],
                                   evl)
-        self.itstat.append(itstat)
+        self.itstat.append(itst)
 
         if self.opt['Verbose']:
             self.isc.printiterstats(itst)
@@ -338,9 +343,6 @@ class OnlineSliceDictLearn2nd(with_metaclass(dictlrn._DictLearn_Meta,
         self.j += 1
 
         self.timer.stop(['solve', 'solve_wo_eval'])
-
-        if self.opt['Verbose'] and self.opt['StatusHeader']:
-            self.isc.printseparator()
 
         return self.getdict()
 
@@ -416,14 +418,15 @@ class OnlineSliceDictLearn2nd(with_metaclass(dictlrn._DictLearn_Meta,
         if self.cri.C == 1:
             S = S.squeeze().transpose(2, 0, 1)[:, np.newaxis, :, :]
         else:
-            assert S.shape[self.cri.dimC] == self.cri.C
+            assert S.shape[-2] == self.cri.C
             S = S.transpose(3, 2, 0, 1)
         # [K, C*Hc*Wc, H*W]
         slices = im2slices(S, kernel_h, kernel_w, self.boundary)
-        shp = [slices.shape[0], self.cri.dimC, kernel_h, kernel_w] + \
-            self.cri.Nv + [1]
+        shp = [slices.shape[0], self.cri.C, kernel_h, kernel_w,
+               S.shape[-2], S.shape[-1], 1]
+        # [K, C, Hc, Wc, H, W, 1] -> [H, W, Hc, Wc, C, K, 1]
         slices = slices.reshape(shp)
-        slices = np.moveaxis(slices, 1, 4)
+        slices = slices.transpose(4, 5, 2, 3, 1, 0, 6)
         return slices
 
     @property
@@ -441,8 +444,8 @@ class OnlineSliceDictLearn2nd(with_metaclass(dictlrn._DictLearn_Meta,
             Sf = sl.rfftn(S, self.cri.Nv, self.cri.axisN)
             Ef = sl.inner(Df, Xf, axis=self.cri.axisM) - Sf
             dfd = sl.rfl2norm2(Ef, S.shape, axis=self.cri.axisN) / 2.
-            rf1 = np.sum(np.abs(X))
-            evl = dict(Dfid=dfd, RegL1=rl1, ObjFun=dfd+self.lmbda*rl1)
+            rl1 = np.sum(np.abs(X))
+            evl = dict(DFid=dfd, RegL1=rl1, ObjFun=dfd+self.lmbda*rl1)
         else:
             evl = None
         return evl
