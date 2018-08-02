@@ -125,7 +125,7 @@ class OnlineSliceDictLearn2nd(with_metaclass(dictlrn._DictLearn_Meta,
             'AccurateDFid': False, 'Boundary': 'circulant_back',
             'BatchSize': 32, 'DataType': None, 'StepIter': -1,
             'CBPDN': copy.deepcopy(cbpdn.ConvBPDN.Options.defaults),
-            'CCMOD': copy.deepcopy(fista.FISTA.Options.defaults),
+            'CCMOD': copy.deepcopy(StripeSliceFISTA.Options.defaults),
             'OCDL': {
                 'p': 1.,  # forgetting exponent
 
@@ -141,7 +141,7 @@ class OnlineSliceDictLearn2nd(with_metaclass(dictlrn._DictLearn_Meta,
         def __init__(self, opt=None):
             super().__init__({
                 'CBPDN': cbpdn.ConvBPDN.Options(self.defaults['CBPDN']),
-                'CCMOD': fista.FISTA.Options(self.defaults['CCMOD']),
+                'CCMOD': StripeSliceFISTA.Options(self.defaults['CCMOD']),
             })
             if opt is None:
                 opt = {}
@@ -195,7 +195,7 @@ class OnlineSliceDictLearn2nd(with_metaclass(dictlrn._DictLearn_Meta,
         self.set_attr('lmbda', lmbda, dtype=self.dtype)
         self.set_attr('boundary', opt['Boundary'], dval='circulant_back')
 
-        D0 = Pcn(D0, opt['OCDL', 'ZeroMean'])
+        D0 = Pcn(D0, opt['CCMOD', 'ZeroMean'])
 
         self.D = np.asarray(D0.reshape(self.cri.shpD), dtype=self.dtype)
         self.S0 = np.asarray(S0.reshape(self.cri.shpS), dtype=self.dtype)
@@ -236,7 +236,7 @@ class OnlineSliceDictLearn2nd(with_metaclass(dictlrn._DictLearn_Meta,
         self.setdict(dstep.getmin())
 
         self.timer.stop('solve_wo_eval')
-        evl = self.evaluate()
+        evl = self.evaluate(S.reshape(self.cri.shpS), X)
         self.timer.start('solve_wo_eval')
 
         t = self.time.elapsed(self.opt['IterTimer'])
@@ -345,6 +345,20 @@ class OnlineSliceDictLearn2nd(with_metaclass(dictlrn._DictLearn_Meta,
         alpha = self.dtype.type(pow(1.-1./(self.j+1.), self.p))
         return alpha
 
+    def evaluate(self, S, X):
+        """Optionally evaluate functional values."""
+        if self.opt['AccurateDFid']:
+            Df = sl.rfftn(self.D, self.cri.Nv, self.cri.axisN)
+            Xf = sl.rfftn(X, self.cri.Nv, self.cri.axisN)
+            Sf = sl.rfftn(S, self.cri.Nv, self.cri.axisN)
+            Ef = sl.inner(Df, Xf, axis=self.cri.axisM) - Sf
+            dfd = sl.rfl2norm2(Ef, S.shape, axis=self.cri.axisN) / 2.
+            rf1 = np.sum(np.abs(X))
+            evl = dict(Dfid=dfd, RegL1=rl1, ObjFun=dfd+self.lmbda*rl1)
+        else:
+            evl = None
+        return evl
+
 
 class StripeSliceFISTA(fista.FISTA):
     r"""FISTA algorithm to solve for the dictionary, where the derivative is
@@ -389,7 +403,6 @@ class StripeSliceFISTA(fista.FISTA):
 
     def set_Omega(self, D=None):
         r"""Set the stripe dictionary :math:`\Omega` from D."""
-        # TODO(leoyolo): benchmark sanity.
         if D is None:
             D = self.Y
         self.Omega.fill(0.)
