@@ -112,6 +112,94 @@ class IterStatsConfig(object):
         print(s)
 
 
+class StripeSliceFISTA(fista.FISTA):
+    r"""FISTA algorithm to solve for the dictionary, where the derivative is
+    given by
+
+    .. math::
+        \nabla_D f = \Omega At - Bt,
+
+    where :math:`\Omega` is the stripe dictionary.
+    """
+
+    class Options(fista.FISTA.Options):
+        defaults = copy.deepcopy(fista.FISTA.Options.defaults)
+        defaults.update({
+            'ZeroMean': True
+        })
+
+        def __init__(self, opt=None):
+            if opt is None:
+                opt = {}
+            super().__init__(opt)
+
+    itstat_fields_objfn = ('Cnstr', )
+    hdrtxt_objfn = ('Cnstr', )
+    hdrval_objfun = {'Cnstr': 'Cnstr'}
+
+    def __init__(self, At, Bt, dsz=None, opt=None):
+        if opt is None:
+            opt = StripeSliceFISTA.Options()
+        if opt['X0'] is not None:
+            self.dsz = opt['X0'].shape
+        else:
+            self.dsz = dsz
+        super().__init__(np.prod(dsz), dsz, At.dtype, opt)
+        self.At = At
+        self.Bt = Bt
+        self.Y = self.X.copy()
+        self.osz = list(copy.deepcopy(self.dsz))
+        self.osz[2] = 2 * self.osz[0] - 1
+        self.osz[3] = 2 * self.osz[1] - 1
+        self.Omega = np.zeros(self.osz, dtype=self.dtype)
+
+    def set_Omega(self, D=None):
+        r"""Set the stripe dictionary :math:`\Omega` from D."""
+        if D is None:
+            D = self.Y
+        self.Omega.fill(0.)
+        for ih, h in enumerate(range(-self.osz[0]+1, self.osz[0])):
+            for iw, w in enumerate(range(-self.osz[1]+1, self.osz[1])):
+                begh = -min(h, 0)
+                endh = self.osz[0] - max(h, 0)
+                begw = -min(w, 0)
+                endw = self.osz[1] - max(w, 0)
+                stripe_dict = D[begh:endh, begw:endw, 0, 0, ...]
+                begh_c = max(h, 0)
+                endh_c = min(self.osz[0] + h, self.osz[0])
+                begw_c = max(w, 0)
+                endw_c = min(self.osz[1] + w, self.osz[1])
+                self.Omega[begh_c:endh_c, begw_c:endw_c, ih, iw, ...] = \
+                    stripe_dict
+
+    def Pcn(self, D):
+        """Proximal function."""
+        return Pcn(D, self.opt['ZeroMean'])
+
+    def eval_grad(self):
+        r"""Evaluate the gradient:
+
+            .. ::math:
+                \nabla_D f = \Omega At - Bt
+        """
+        self.set_Omega()
+        grad = einsum('ijklmno,klpqros->ijpqmns', (self.Omega, self.At))
+        grad -= self.Bt
+        return grad
+
+    def eval_proxop(self, V):
+        return self.Pcn(V)
+
+    def rsdl(self):
+        """Fixed point residual."""
+        return linalg.norm(self.X - self.Yprv)
+
+    def eval_objfn(self):
+        """Eval constraint only."""
+        cnstr = linalg.norm(self.X - self.Pcn(self.X))
+        return (cnstr, )
+
+
 class OnlineSliceDictLearn2nd(with_metaclass(dictlrn._DictLearn_Meta,
                                              common.BasicIterativeSolver)):
     r"""Stochastic Approximation based online convolutional dictionary
@@ -358,94 +446,6 @@ class OnlineSliceDictLearn2nd(with_metaclass(dictlrn._DictLearn_Meta,
         else:
             evl = None
         return evl
-
-
-class StripeSliceFISTA(fista.FISTA):
-    r"""FISTA algorithm to solve for the dictionary, where the derivative is
-    given by
-
-    .. math::
-        \nabla_D f = \Omega At - Bt,
-
-    where :math:`\Omega` is the stripe dictionary.
-    """
-
-    class Options(fista.FISTA.Options):
-        defaults = copy.deepcopy(fista.FISTA.Options.defaults)
-        defaults.update({
-            'ZeroMean': True
-        })
-
-        def __init__(self, opt=None):
-            if opt is None:
-                opt = {}
-            super().__init__(opt)
-
-    itstat_fields_objfn = ('Cnstr', )
-    hdrtxt_objfn = ('Cnstr', )
-    hdrval_objfun = {'Cnstr': 'Cnstr'}
-
-    def __init__(self, At, Bt, dsz=None, opt=None):
-        if opt is None:
-            opt = StripeSliceFISTA.Options()
-        if opt['X0'] is not None:
-            self.dsz = opt['X0'].shape
-        else:
-            self.dsz = dsz
-        super().__init__(np.prod(dsz), dsz, At.dtype, opt)
-        self.At = At
-        self.Bt = Bt
-        self.Y = self.X.copy()
-        self.osz = list(copy.deepcopy(self.dsz))
-        self.osz[2] = 2 * self.osz[0] - 1
-        self.osz[3] = 2 * self.osz[1] - 1
-        self.Omega = np.zeros(self.osz, dtype=self.dtype)
-
-    def set_Omega(self, D=None):
-        r"""Set the stripe dictionary :math:`\Omega` from D."""
-        if D is None:
-            D = self.Y
-        self.Omega.fill(0.)
-        for ih, h in enumerate(range(-self.osz[0]+1, self.osz[0])):
-            for iw, w in enumerate(range(-self.osz[1]+1, self.osz[1])):
-                begh = -min(h, 0)
-                endh = self.osz[0] - max(h, 0)
-                begw = -min(w, 0)
-                endw = self.osz[1] - max(w, 0)
-                stripe_dict = D[begh:endh, begw:endw, 0, 0, ...]
-                begh_c = max(h, 0)
-                endh_c = min(self.osz[0] + h, self.osz[0])
-                begw_c = max(w, 0)
-                endw_c = min(self.osz[1] + w, self.osz[1])
-                self.Omega[begh_c:endh_c, begw_c:endw_c, ih, iw, ...] = \
-                    stripe_dict
-
-    def Pcn(self, D):
-        """Proximal function."""
-        return Pcn(D, self.opt['ZeroMean'])
-
-    def eval_grad(self):
-        r"""Evaluate the gradient:
-
-            .. ::math:
-                \nabla_D f = \Omega At - Bt
-        """
-        self.set_Omega()
-        grad = einsum('ijklmno,klpqros->ijpqmns', (self.Omega, self.At))
-        grad -= self.Bt
-        return grad
-
-    def eval_proxop(self, V):
-        return self.Pcn(V)
-
-    def rsdl(self):
-        """Fixed point residual."""
-        return linalg.norm(self.X - self.Yprv)
-
-    def eval_objfn(self):
-        """Eval constraint only."""
-        cnstr = linalg.norm(self.X - self.Pcn(self.X))
-        return (cnstr, )
 
 
 class OnlineSliceDictLearn(with_metaclass(dictlrn._DictLearn_Meta,
