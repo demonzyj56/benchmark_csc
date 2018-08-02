@@ -245,6 +245,7 @@ class OnlineSliceDictLearn2nd(with_metaclass(dictlrn._DictLearn_Meta,
         """Internally we use a 7-dim representation over blobs. This increases
         the spatial dimension of 2 to 4 to allow for extra dimensions for
         slices.
+
         -------------------------------------------------------------------
         blob     | spatial                                ,chn  ,sig  ,fil
         -------------------------------------------------------------------
@@ -252,12 +253,14 @@ class OnlineSliceDictLearn2nd(with_metaclass(dictlrn._DictLearn_Meta,
         D        |  (Hc     ,  Wc     ,  1      ,  1      ,  C  ,  1  ,  M)
         X        |  (H      ,  W      ,  1      ,  1      ,  1  ,  K  ,  M)
         Omega    |  (Hc     ,  Wc     ,  2Hc-1  ,  2Wc-1  ,  C  ,  1  ,  M)
-        At       |  (2Hc-1  ,  2Wc-1  ,  1      ,  1      ,  C  ,  M  ,  M)
+        At       |  (2Hc-1  ,  2Wc-1  ,  1      ,  1      ,  1  ,  M  ,  M)
         Bt       |  (Hc     ,  Wc     ,  1      ,  1      ,  C  ,  1  ,  M)
         patches  |  (H      ,  W      ,  Hc     ,  Wc     ,  C  ,  K  ,  1)
         gamma    |  (H      ,  W      ,  2Hc-1  ,  2Wc-1  ,  1  ,  K  ,  M)
         -------------------------------------------------------------------
 
+        Here the `signal` dimension of At is occupied by M, which comes from
+        stripe dictionary Omega.
         """
         if opt is None:
             opt = OnlineSliceDictLearn2nd.Options()
