@@ -12,7 +12,6 @@ import sporco.linalg as sl
 from sporco.util import u
 from sporco import common, cdict
 from sporco.dictlrn import dictlrn
-from sporco.dictlrn import common as dc
 from sporco.admm import cbpdn
 from sporco.fista import fista
 import torch
