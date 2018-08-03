@@ -1,0 +1,51 @@
+# This file gives default configurations for each solver.
+OnlineConvBPDNDictLearn:
+    Verbose: True
+    AccurateDFid: True
+    CBPDN:
+        rho: 3.0
+        RelaxParam: 1.
+        # This is stupid
+        RelStopTol: 0.0000001
+        MaxMainIter: 100
+        FastSolve: False
+        AutoRho:
+            Enabled: False
+    OCDL:
+        ZeroMean: False
+        eta_a: 10.
+        eta_b: 20.
+
+OnlineSliceDictLearn2nd:
+    Verbose: True
+    AccurateDFid: True
+    CBPDN:
+        rho: 3.0
+        RelaxParam: 1.
+        RelStopTol: 0.0000001
+        MaxMainIter: 100
+        FastSolve: False
+        AutoRho:
+            Enabled: False
+    CCMOD:
+        Verbose: False
+        FastSolve: False
+        L: 100.
+        MaxMainIter: 1000
+        RelStopTol: 0.001
+        ZeroMean: False
+        BackTrack:
+            Enabled: False
+        AutoStop:
+            Enabled: False
+            Tau0: 0.01
+    OCDL:
+        p: 10.
+
+ConvBPDN:
+    Verbose: True
+    MaxMainIter: 100
+    RelStopTol: 0.005
+    AuxVarObj: False
+    AutoRho:
+        Enabled: False
