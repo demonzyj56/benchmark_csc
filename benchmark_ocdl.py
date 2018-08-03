@@ -34,11 +34,11 @@ def parse_args():
     parser.add_argument('--output_path', default='.default_ocdl', type=str, help='Path for output')
     parser.add_argument('--dataset', default='cifar10', type=str, help='Dataset to use')
     parser.add_argument('--lambda', '--lmbda', dest='lmbda', default=0.2, type=float, help='Lambda value for CDL')
-    parser.add_argument('--epochs', default=5, type=int, help='Number of epochs for training')
-    parser.add_argument('--batch_size', default=2, type=int, help='Number of samples for each epoch')
+    parser.add_argument('--epochs', default=50, type=int, help='Number of epochs for training')
+    parser.add_argument('--batch_size', default=32, type=int, help='Number of samples for each epoch')
     parser.add_argument('--cfg', default='.default_ocdl.yml', type=str, help='Config yaml file for solvers')
     parser.add_argument('--patch_size', default=8, type=int, help='Height and width for dictionary')
-    parser.add_argument('--num_atoms', default=64, type=int, help='Size of dictionary')
+    parser.add_argument('--num_atoms', default=100, type=int, help='Size of dictionary')
     parser.add_argument('--rng_seed', default=-1, type=int, help='Random seed to use; negative values mean dont set')
     parser.add_argument('--no_tikhonov_filter', action='store_true', help='No tikhonov low pass filtering is applied')
     parser.add_argument('--skip_test', action='store_true', help='Skip running reconstruction')
@@ -86,7 +86,8 @@ def train_models(solvers, train_blob, args):
                 # fix lambda to be 5
                 _, blob = su.tikhonov_filter(blob, 5.)
             s.solve(blob)
-            np.save(os.path.join(paths[k], f'{e}.npy'), s.getdict().squeeze())
+            np.save(os.path.join(paths[k], f'{args.dataset}.{e}.npy'),
+                    s.getdict().squeeze())
         cur += args.batch_size
     return solvers
 
@@ -101,7 +102,7 @@ def reconstruct_psnr(solvers, test_blob, args, opt=None):
         sh = test_blob
     psnr_all = {}
     for k, v in solvers.items():
-        d = cbpdn.ConvBPDN(v.getdict(), sh, args.lmbda, opt=opt)
+        d = cbpdn.ConvBPDN(v.getdict().squeeze(), sh, args.lmbda, opt=opt)
         d.solve()
         shr = d.reconstruct().squeeze()
         imgr = sl + shr
@@ -135,7 +136,16 @@ def dataset_loader(name, args):
 
 def plot_and_save_statistics(solvers, args):
     """Plot some desired statistics."""
-    pass
+    for k, v in solvers.items():
+        # save dictionaries visualization
+        plt.clf()
+        plt.imshow(su.tiledict(v.getdict().squeeze()))
+        plt.savefig(os.path.join(args.output_path, f'{args.dataset}.{k}.pdf'),
+                    bbox_inches='tight')
+        # save statistics
+        stats_arr = su.ntpl2array(v.getitstat())
+        np.save(os.path.join(args.output_path, f'{args.dataset}.{k}_stats.npy'),
+                stats_arr)
 
 
 def main():
@@ -145,8 +155,9 @@ def main():
         os.makedirs(args.output_path)
     log_name = os.path.join(
         args.output_path,
-        '{:s}.{:%Y-%m-%d_%H-%M-%S}.log'.format(
+        '{:s}.{:s}.{:%Y-%m-%d_%H-%M-%S}.log'.format(
             args.name,
+            args.dataset,
             datetime.datetime.now(),
         )
     )
@@ -183,11 +194,6 @@ def main():
 
     # plot and save everything
     plot_and_save_statistics(solvers, args)
-
-    # test reconstruction
-    if not args.skip_test:
-        reconstruct_psnr(solvers, test_blob, args, opt=copt)
-
 
 if __name__ == "__main__":
     main()

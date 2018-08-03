@@ -467,6 +467,13 @@ class OnlineSliceDictLearn2nd(with_metaclass(dictlrn._DictLearn_Meta,
             evl = None
         return evl
 
+    def getitstat(self):
+        """Get iteration stats as named tuple of arrays instead of array of
+        named tuples.
+        """
+
+        return su.transpose_ntpl_list(self.itstat)
+
 
 class OnlineSliceDictLearn(with_metaclass(dictlrn._DictLearn_Meta,
                                           common.BasicIterativeSolver)):
