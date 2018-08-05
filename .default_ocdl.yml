@@ -32,7 +32,7 @@ OnlineSliceDictLearn2nd:
         FastSolve: False
         L: 100.
         MaxMainIter: 1000
-        RelStopTol: 0.001
+        RelStopTol: 0.01
         ZeroMean: False
         BackTrack:
             Enabled: False
@@ -41,6 +41,7 @@ OnlineSliceDictLearn2nd:
             Tau0: 0.01
     OCDL:
         p: 10.
+        DiminishingTol: True
 
 ConvBPDN:
     Verbose: True
