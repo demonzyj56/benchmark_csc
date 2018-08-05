@@ -23,6 +23,7 @@ import sporco.metric as sm
 from sporco.admm import cbpdn
 from sporco.dictlrn.onlinecdl import OnlineConvBPDNDictLearn
 from fista_slice_online import OnlineSliceDictLearn2nd
+from onlinecdl_surrogate import OnlineDictLearnDenseSurrogate
 import image_dataset
 from cifar import CIFAR10
 
@@ -146,6 +147,14 @@ def plot_and_save_statistics(solvers, args):
         stats_arr = su.ntpl2array(v.getitstat())
         np.save(os.path.join(args.output_path, f'{args.dataset}.{k}_stats.npy'),
                 stats_arr)
+    if 1:
+        plt.clf()
+        nsol = len(solvers)
+        for i, (k, v) in enumerate(solvers.items()):
+            plt.subplot(1, nsol, i+1)
+            plt.imshow(su.tiledict(v.getdict().squeeze()))
+            plt.title(k)
+        plt.show()
 
 
 def main():
