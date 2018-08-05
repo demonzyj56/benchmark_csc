@@ -199,8 +199,9 @@ class StripeSliceFISTA(fista.FISTA):
         return (cnstr, )
 
 
-class OnlineSliceDictLearn2nd(with_metaclass(dictlrn._DictLearn_Meta,
-                                             common.BasicIterativeSolver)):
+class OnlineDictLearnSliceSurrogate(
+    with_metaclass(dictlrn._DictLearn_Meta, common.BasicIterativeSolver)
+):
     r"""Stochastic Approximation based online convolutional dictionary
     learning.
     """
@@ -235,7 +236,7 @@ class OnlineSliceDictLearn2nd(with_metaclass(dictlrn._DictLearn_Meta,
             self.update(opt)
 
     def __new__(cls, *args, **kwargs):
-        instance = super(OnlineSliceDictLearn2nd, cls).__new__(cls)
+        instance = super(OnlineDictLearnSliceSurrogate, cls).__new__(cls)
         instance.timer = su.Timer(['init', 'solve', 'solve_wo_eval',
                                    'xstep', 'dstep'])
         instance.timer.start('init')
@@ -263,8 +264,8 @@ class OnlineSliceDictLearn2nd(with_metaclass(dictlrn._DictLearn_Meta,
         stripe dictionary Omega.
         """
         if opt is None:
-            opt = OnlineSliceDictLearn2nd.Options()
-        assert isinstance(opt, OnlineSliceDictLearn2nd.Options)
+            opt = OnlineDictLearnSliceSurrogate.Options()
+        assert isinstance(opt, OnlineDictLearnSliceSurrogate.Options)
         self.opt = opt
 
         self.set_dtype(opt, S0.dtype)

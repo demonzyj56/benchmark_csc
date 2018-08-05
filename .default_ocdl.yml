@@ -16,7 +16,7 @@ OnlineConvBPDNDictLearn:
         eta_a: 10.
         eta_b: 20.
 
-OnlineSliceDictLearn2nd:
+OnlineDictLearnSliceSurrogate:
     Verbose: True
     AccurateDFid: True
     CBPDN:

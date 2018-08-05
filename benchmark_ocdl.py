@@ -22,7 +22,7 @@ import sporco.util as su
 import sporco.metric as sm
 from sporco.admm import cbpdn
 from sporco.dictlrn.onlinecdl import OnlineConvBPDNDictLearn
-from fista_slice_online import OnlineSliceDictLearn2nd
+from fista_slice_online import OnlineDictLearnSliceSurrogate
 from onlinecdl_surrogate import OnlineDictLearnDenseSurrogate
 import image_dataset
 from cifar import CIFAR10
