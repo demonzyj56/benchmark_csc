@@ -43,6 +43,33 @@ OnlineDictLearnSliceSurrogate:
         p: 10.
         DiminishingTol: True
 
+OnlineDictLearnDenseSurrogate:
+    Verbose: True
+    AccurateDFid: True
+    CBPDN:
+        rho: 3.0
+        RelaxParam: 1.
+        RelStopTol: 0.0000001
+        MaxMainIter: 100
+        FastSolve: False
+        AutoRho:
+            Enabled: False
+    CCMOD:
+        Verbose: False
+        FastSolve: False
+        L: 100.
+        MaxMainIter: 1000
+        RelStopTol: 0.01
+        ZeroMean: False
+        BackTrack:
+            Enabled: False
+        AutoStop:
+            Enabled: False
+            Tau0: 0.01
+    OCDL:
+        p: 10.
+        DiminishingTol: True
+
 ConvBPDN:
     Verbose: True
     MaxMainIter: 100
