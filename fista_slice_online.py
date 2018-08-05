@@ -215,7 +215,7 @@ class OnlineSliceDictLearn2nd(with_metaclass(dictlrn._DictLearn_Meta,
             'CCMOD': copy.deepcopy(StripeSliceFISTA.Options.defaults),
             'OCDL': {
                 'p': 1.,  # forgetting exponent
-
+                'DiminishingTol': False,  # diminishing tolerance for FISTA
             }
         }
         defaults['CBPDN'].update({
@@ -326,6 +326,9 @@ class OnlineSliceDictLearn2nd(with_metaclass(dictlrn._DictLearn_Meta,
         # update dictionary with FISTA
         fopt = copy.deepcopy(self.opt['CCMOD'])
         fopt['X0'] = self.D
+        if self.opt['OCDL', 'DiminishingTol']:
+            fopt['RelStopTol'] = \
+                self.dtype.type(self.opt['CCMOD', 'RelStopTol']/(1.+self.j))
         self.timer.start('dstep')
         dstep = StripeSliceFISTA(self.At, self.Bt, opt=fopt)
         dstep.solve()
@@ -350,6 +353,11 @@ class OnlineSliceDictLearn2nd(with_metaclass(dictlrn._DictLearn_Meta,
 
         self.timer.stop(['solve', 'solve_wo_eval'])
 
+        if 0:
+            import matplotlib.pyplot as plt
+            plt.imshow(su.tiledict(self.getdict().squeeze()))
+            plt.show()
+
         return self.getdict()
 
     def config_itstats(self):
@@ -363,11 +371,11 @@ class OnlineSliceDictLearn2nd(with_metaclass(dictlrn._DictLearn_Meta,
         isdmap = {'D_L': 'L', 'D_Rsdl': 'Rsdl', 'D_It': 'Iter'}
         hdrtxt = ['Itn', 'Fnc', 'DFid', u('ℓ1'),
                   'Itn_X', 'r_X', 's_X', u('ρ_X'),
-                  'Itn_D', 'r_D', 'L_D']
+                  'Itn_D', 'r_D', 'L_D', 'Time']
         hdrmap = {'Itn': 'Iter', 'Fnc': 'ObjFun', 'DFid': 'DFid',
                   u('ℓ1'): 'RegL1', 'r_X': 'XPrRsdl', 's_X': 'XDlRsdl',
                   u('ρ_X'): 'XRho', 'Itn_X': 'X_It',
-                  'r_D': 'D_Rsdl', 'L_D': 'D_L', 'Itn_D': 'D_It'}
+                  'r_D': 'D_Rsdl', 'L_D': 'D_L', 'Itn_D': 'D_It', 'Time': 'Time'}
         if self.opt['AccurateDFid']:
             evlmap = {'ObjFun': 'ObjFun', 'DFid': 'DFid', 'RegL1': 'RegL1'}
         else:

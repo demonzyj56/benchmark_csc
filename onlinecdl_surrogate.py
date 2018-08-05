@@ -45,8 +45,8 @@ class SpatialFISTA(fista.FISTA):
         """We use the following shape formulation:
         ----------------------
         D  | (Hc, Wc, C, 1, M)
-        At | (Hc, Wc, Hc, Wc, 1, M, M)
-        Bt | (Hc, Wc, C, 1, M)
+        At | (Hc*Wc*M, Hc*Wc*M)
+        Bt | (Hc*Wc*M, C)
         ----------------------
         """
         if opt is None:
@@ -70,20 +70,26 @@ class SpatialFISTA(fista.FISTA):
             .. ::math:
                 \nabla_D f = At * D - Bt
         """
-        if 1:
-            grad = einsum('ijklmno,klpqn->ijpqo', (self.At, self.Y))
-        else:
-            # [Hc, Wc, Hc, Wc, 1, M, M] -> [Hc*Wc*M, Hc*Wc*M]
-            A = np.moveaxis(self.At, -1, 2)
-            A = A.reshape(np.prod(A.shape[:3]), -1)
-            # [Hc, Wc, C, 1, M] -> [Hc*Wc*M, C]
-            D = np.moveaxis(self.Y, -1, 2)
-            orig_shp = D.shape
-            D = D.reshape(np.prod(D.shape[:3]), -1)
-            grad = A.dot(D)
-            grad = grad.reshape(orig_shp)
-            grad = np.moveaxis(grad, 2, -1)
+        #  if 1:
+        #      grad = einsum('ijklmno,klpqn->ijpqo', (self.At, self.Y))
+        #  else:
+        #      # [Hc, Wc, Hc, Wc, 1, M, M] -> [Hc*Wc*M, Hc*Wc*M]
+        #      A = np.moveaxis(self.At, -1, 2)
+        #      A = A.reshape(np.prod(A.shape[:3]), -1)
+        #      # [Hc, Wc, C, 1, M] -> [Hc*Wc*M, C]
+        #      D = np.moveaxis(self.Y, -1, 2)
+        #      orig_shp = D.shape
+        #      D = D.reshape(np.prod(D.shape[:3]), -1)
+        #      grad = A.dot(D)
+        #      grad = grad.reshape(orig_shp)
+        #      grad = np.moveaxis(grad, 2, -1)
+        D = np.moveaxis(self.Y, -1, 2)
+        orig_shp = D.shape
+        D = D.reshape(-1, D.shape[-2])  # the last dim is C
+        grad = self.At.dot(D)
         grad -= self.Bt
+        grad = grad.reshape(orig_shp)
+        grad = np.moveaxis(grad, 2, -1)
         return grad
 
     def eval_proxop(self, V):
@@ -109,7 +115,7 @@ class OnlineDictLearnDenseSurrogate(
         defaults = {
             'Verbose': True, 'StatusHeader': True, 'IterTimer': 'solve',
             'MaxMainIter': 1000, 'Callback': None, 'AccurateDFid': False,
-            'Boundary': 'circulant_back', 'DataType': None,
+            'Boundary': 'circulant_front', 'DataType': None,
             'CBPDN': copy.deepcopy(cbpdn.ConvBPDN.Options.defaults),
             'CCMOD': copy.deepcopy(SpatialFISTA.Options.defaults),
             'OCDL': {
@@ -225,7 +231,7 @@ class OnlineDictLearnDenseSurrogate(
 
         self.timer.stop(['solve', 'solve_wo_eval'])
 
-        if 1:
+        if 0:
             import matplotlib.pyplot as plt
             plt.imshow(su.tiledict(self.getdict().squeeze()))
             plt.show()
@@ -274,20 +280,24 @@ class OnlineDictLearnDenseSurrogate(
 
         """
         Lmbda_new = self.dtype.type(self.alpha*self.Lmbda+1)
-        if 0:
-            Hc, Wc = self.D.shape[:2]
-            # [H, W, Hc, Wc, 1, K, M] -> [H, W, K, Hc, Wc, 1, M]
-            new = np.moveaxis(Xe, 5, 2)
-            shp = [np.prod(new.shape[:3]), np.prod(new.shape[3:])]
-            # -> [H*W*K, Hc*Wc*M]
-            new = new.reshape(shp)
-            # -> [Hc*Wc*M, Hc*Wc*M]
-            new = new.T.dot(new)
-            new = new.reshape(Hc, Wc, self.cri.M, Hc, Wc, 1, self.cri.M)
-            new = np.moveaxis(new, 2, -1)
-        else:
-            # (H, W, Hc, Wc, 1, K, M)*2 -> (Hc, Wc, Hc, Wc, 1, M, M)
-            new = einsum('ijklmno,ijpqrns->klpqmso', (Xe, Xe))
+        #  if 0:
+        #      Hc, Wc = self.D.shape[:2]
+        #      # [H, W, Hc, Wc, 1, K, M] -> [H, W, K, Hc, Wc, 1, M]
+        #      new = np.moveaxis(Xe, 5, 2)
+        #      shp = [np.prod(new.shape[:3]), np.prod(new.shape[3:])]
+        #      # -> [H*W*K, Hc*Wc*M]
+        #      new = new.reshape(shp)
+        #      # -> [Hc*Wc*M, Hc*Wc*M]
+        #      new = new.T.dot(new)
+        #      new = new.reshape(Hc, Wc, self.cri.M, Hc, Wc, 1, self.cri.M)
+        #      new = np.moveaxis(new, 2, -1)
+        #  else:
+        #      # (H, W, Hc, Wc, 1, K, M)*2 -> (Hc, Wc, Hc, Wc, 1, M, M)
+        #      new = einsum('ijklmno,ijpqrns->klpqmso', (Xe, Xe))
+        X = np.moveaxis(Xe, 5, 2)
+        shp = [np.prod(X.shape[:3]), np.prod(X.shape[3:])]
+        X = X.reshape(shp)
+        new = X.T.dot(X)
         self.At = np.asarray(
             (self.At*self.alpha*self.Lmbda+new) * (1./Lmbda_new),
             dtype=self.dtype
@@ -302,20 +312,25 @@ class OnlineDictLearnDenseSurrogate(
         """
         # (H, W, Hc, Wc, 1, K, M), (H, W, C, K, 1) -> (Hc, Wc, C, 1, M)
         Lmbda_new = self.dtype.type(self.alpha*self.Lmbda+1)
-        if 0:
-            Hc, Wc, = self.D.shape[:2]
-            Xe_mat = np.moveaxis(Xe, 5, 2)
-            S_mat = np.moveaxis(S, 3, 2)
-            # [H*W*K, Hc, Wc, 1, M]
-            Xe_mat = Xe_mat.reshape(np.prod(Xe_mat.shape[:3]), *Xe_mat.shape[3:])
-            # [H*W*K, C]
-            S_mat = S_mat.reshape(np.prod(S_mat.shape[:3]), -1)
-            new = np.zeros((Hc, Wc, self.cri.C, 1, self.cri.M), dtype=self.dtype)
-            for c in range(self.cri.C):
-                out = np.einsum('i,i...', S_mat[:, c], Xe_mat)
-                new[:, :, c, ...] = out
-        else:
-            new = einsum('ijklmno,ijpnq->klpqo', (Xe, S))
+        #  if 0:
+        #      Hc, Wc, = self.D.shape[:2]
+        #      Xe_mat = np.moveaxis(Xe, 5, 2)
+        #      S_mat = np.moveaxis(S, 3, 2)
+        #      # [H*W*K, Hc, Wc, 1, M]
+        #      Xe_mat = Xe_mat.reshape(np.prod(Xe_mat.shape[:3]), *Xe_mat.shape[3:])
+        #      # [H*W*K, C]
+        #      S_mat = S_mat.reshape(np.prod(S_mat.shape[:3]), -1)
+        #      new = np.zeros((Hc, Wc, self.cri.C, 1, self.cri.M), dtype=self.dtype)
+        #      for c in range(self.cri.C):
+        #          out = np.einsum('i,i...', S_mat[:, c], Xe_mat)
+        #          new[:, :, c, ...] = out
+        #  else:
+        #      new = einsum('ijklmno,ijpnq->klpqo', (Xe, S))
+        X = np.moveaxis(Xe, 5, 2)
+        X = X.reshape(np.prod(X.shape[:3]), -1)
+        S = np.moveaxis(S, 3, 2)
+        S = S.reshape(np.prod(S.shape[:3]), -1)
+        new = X.T.dot(S)
         self.Bt = np.asarray(
             (self.Bt*self.alpha*self.Lmbda+new) * (1./Lmbda_new),
             dtype=self.dtype
@@ -360,9 +375,9 @@ class OnlineDictLearnDenseSurrogate(
         else:
             code = np.zeros((H, W, kernel_h, kernel_w, 1, self.cri.K, self.cri.M), dtype=self.dtype)
             if self.boundary == 'circulant_back':
-                pad = [(0, kernel_h), (0, kernel_w)]
+                pad = [(0, kernel_h-1), (0, kernel_w-1)]
             elif self.boundary == 'circulant_front':
-                pad = [(kernel_h, 0), (kernel_w, 0)]
+                pad = [(kernel_h-1, 0), (kernel_w-1, 0)]
             else:
                 raise NotImplementedError
             pad += [(0, 0) for _ in range(X.ndim-2)]
