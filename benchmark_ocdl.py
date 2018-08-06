@@ -15,6 +15,7 @@ import sys
 import yaml
 import pyfftw  # pylint: disable=unused-import
 import numpy as np
+import scipy.io as sio
 import matplotlib.pyplot as plt
 from matplotlib.ticker import MaxNLocator
 import torch
@@ -120,6 +121,14 @@ def dataset_loader(name, args):
                                                      scaled=True, gray=False)
         test_blob = image_dataset.create_image_blob('singles', np.float32,
                                                     scaled=True, gray=False)
+    elif name == 'fruit.gray' or name == 'city.gray':
+        train_path = os.path.join('images', 'OCSC', name.split('.')[0]+'_10',
+                                  'train', 'train_lcne.mat')
+        test_path = os.path.join('images', 'OCSC', name.split('.')[0]+'_10',
+                                 'test', 'test_lcne.mat')
+        assert os.path.exists(train_path) and os.path.exists(test_path)
+        train_blob = sio.loadmat(train_path)['b'].astype(np.float32)
+        test_blob = sio.loadmat(test_path)['b'].astype(np.float32)
     elif name == 'cifar10':
         cifar10_train = CIFAR10(root='.cifar10', train=True, download=True,
                                 data_type=np.float32)
@@ -140,7 +149,11 @@ def plot_and_save_statistics(solvers, args):
     for k, v in solvers.items():
         # save dictionaries visualization
         plt.clf()
-        plt.imshow(su.tiledict(v.getdict().squeeze()))
+        d = v.getdict().squeeze()
+        if d.ndim == 3:  # grayscale image
+            plt.imshow(su.tiledict(d), cmap='gray')
+        else:
+            plt.imshow(su.tiledict(d))
         plt.savefig(os.path.join(args.output_path, f'{args.dataset}.{k}.pdf'),
                     bbox_inches='tight')
         # save statistics
@@ -152,7 +165,11 @@ def plot_and_save_statistics(solvers, args):
         nsol = len(solvers)
         for i, (k, v) in enumerate(solvers.items()):
             plt.subplot(1, nsol, i+1)
-            plt.imshow(su.tiledict(v.getdict().squeeze()))
+            d = v.getdict().squeeze()
+            if d.ndim == 3:  # grayscale image
+                plt.imshow(su.tiledict(d), cmap='gray')
+            else:
+                plt.imshow(su.tiledict(d))
             plt.title(k)
         plt.show()
 
@@ -186,8 +203,10 @@ def main():
     train_blob, test_blob = dataset_loader(args.dataset, args)
 
     # load dictionary
-    # TODO(leoyolo): check for grayscale image
-    D0 = np.random.randn(args.patch_size, args.patch_size, 3, args.num_atoms)
+    if train_blob.ndim == 3:
+        D0 = np.random.randn(args.patch_size, args.patch_size, args.num_atoms)
+    else:
+        D0 = np.random.randn(args.patch_size, args.patch_size, 3, args.num_atoms)
 
     # load solvers
     solvers = {}
@@ -203,6 +222,7 @@ def main():
 
     # plot and save everything
     plot_and_save_statistics(solvers, args)
+
 
 if __name__ == "__main__":
     main()
