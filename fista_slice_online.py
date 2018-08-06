@@ -210,8 +210,7 @@ class OnlineDictLearnSliceSurrogate(
         defaults = {
             'Verbose': True, 'StatusHeader': True, 'IterTimer': 'solve',
             'MaxMainIter': 1000, 'Callback': None,
-            'AccurateDFid': False, 'Boundary': 'circulant_back',
-            'BatchSize': 32, 'DataType': None, 'StepIter': -1,
+            'AccurateDFid': False, 'DataType': None,
             'CBPDN': copy.deepcopy(cbpdn.ConvBPDN.Options.defaults),
             'CCMOD': copy.deepcopy(StripeSliceFISTA.Options.defaults),
             'OCDL': {
@@ -237,7 +236,7 @@ class OnlineDictLearnSliceSurrogate(
 
     def __new__(cls, *args, **kwargs):
         instance = super(OnlineDictLearnSliceSurrogate, cls).__new__(cls)
-        instance.timer = su.Timer(['init', 'solve', 'solve_wo_eval',
+        instance.timer = su.Timer(['init', 'solve', 'solve_wo_eval', 'hessian',
                                    'xstep', 'dstep'])
         instance.timer.start('init')
         return instance
@@ -284,7 +283,6 @@ class OnlineDictLearnSliceSurrogate(
         self.j = 0
 
         self.set_attr('lmbda', lmbda, dtype=self.dtype)
-        self.set_attr('boundary', opt['Boundary'], dval='circulant_back')
 
         D0 = Pcn(D0, opt['CCMOD', 'ZeroMean'])
 
@@ -319,9 +317,11 @@ class OnlineDictLearnSliceSurrogate(
         X = np.asarray(xstep.getcoef().reshape(self.cri.shpX), dtype=self.dtype)
 
         # update At and Bt
+        self.timer.start('hessian')
         patches = self.im2slices(S)
         self.update_At(X)
         self.update_Bt(X, patches)
+        self.timer.stop('hessian')
         self.Lmbda = self.dtype.type(self.alpha*self.Lmbda+1)
 
         # update dictionary with FISTA
@@ -339,7 +339,7 @@ class OnlineDictLearnSliceSurrogate(
         self.setdict(dstep.getmin())
 
         self.timer.stop('solve_wo_eval')
-        evl = self.evaluate(S.reshape(self.cri.shpS), X)
+        evl = self.evaluate(S, X)
         self.timer.start('solve_wo_eval')
 
         t = self.timer.elapsed(self.opt['IterTimer'])
@@ -404,7 +404,16 @@ class OnlineDictLearnSliceSurrogate(
         """
         gamma = self.stripe_slice(X)
         Lmbda_new = self.dtype.type(self.alpha*self.Lmbda+1)
-        new = einsum('ijklmno,ijpqrns->klpqmos', (gamma, X))
+        if 0:
+            new = einsum('ijklmno,ijpqrns->klpqmos', (gamma, X))
+        else:
+            gamma = np.moveaxis(gamma, 5, 2)
+            gamma = gamma.reshape(np.prod(gamma.shape[:3]), -1)
+            X = X.reshape(-1, X.shape[-1])
+            new = gamma.T.dot(X)
+            Hc, Wc = self.cri.shpD[:2]
+            shp = [2*Hc-1, 2*Wc-1, 1, 1, 1, self.cri.M, self.cri.M]
+            new = new.reshape(shp)
         self.At = np.asarray(
             (self.At*self.alpha*self.Lmbda+new) * (1./Lmbda_new),
             dtype=self.dtype
@@ -418,7 +427,16 @@ class OnlineDictLearnSliceSurrogate(
 
         """
         Lmbda_new = self.dtype.type(self.alpha*self.Lmbda+1)
-        new = einsum('ijklmno,ijpqrns->klpqmos', (patches, X))
+        if 0:
+            new = einsum('ijklmno,ijpqrns->klpqmos', (patches, X))
+        else:
+            patches = np.moveaxis(patches, 5, 2)
+            patches = patches.reshape(np.prod(patches.shape[:3]), -1)
+            X = X.reshape(-1, X.shape[-1])
+            new = patches.T.dot(X)
+            Hc, Wc = self.cri.shpD[:2]
+            shp = [Hc, Wc, 1, 1, self.cri.Cd, 1, self.cri.M]
+            new = new.reshape(shp)
         self.Bt = np.asarray(
             (self.Bt*self.alpha*self.Lmbda+new) * (1./Lmbda_new),
             dtype=self.dtype
@@ -426,34 +444,36 @@ class OnlineDictLearnSliceSurrogate(
 
     def stripe_slice(self, X):
         r"""Construct stripe slice (:math:`\gamma`) from sparse code X."""
+        H, W = X.shape[:2]
         Hc, Wc = self.cri.shpD[:2]
         sz = list(copy.deepcopy(X.shape))
         sz[2], sz[3] = 2*Hc-1, 2*Wc-1
-        slices = np.zeros(sz, dtype=X.dtype)
+        slices = np.zeros(sz, dtype=self.dtype)
         pad = [(Hc-1, Hc-1), (Wc-1, Wc-1)] + [(0, 0) for _ in range(X.ndim-2)]
         Xp = np.pad(X, pad, 'wrap')
-        for h in range(X.shape[0]):
-            for w in range(X.shape[1]):
-                gamma = Xp[h:h+sz[2], w:w+sz[3], 0, 0, ...]  # 5D
-                slices[h, w, ...] = gamma
+        for h in range(sz[2]):
+            for w in range(sz[3]):
+                gamma = Xp[h:h+H, w:w+W, 0, 0, ...]
+                slices[:, :, h, w, ...] = gamma
         return slices
 
     def im2slices(self, S):
         """Convert signals to patches."""
-        kernel_h, kernel_w = self.cri.shpD[:2]
-        if self.cri.C == 1:
-            S = S.squeeze().transpose(2, 0, 1)[:, np.newaxis, :, :]
+        Hc, Wc = self.cri.shpD[:2]
+        H, W = S.shape[:2]
+        if self.cri.C > 1:
+            shp = [H, W, Hc, Wc, self.cri.C, self.cri.K]
         else:
-            assert S.shape[-2] == self.cri.C
-            S = S.transpose(3, 2, 0, 1)
-        # [K, C*Hc*Wc, H*W]
-        slices = im2slices(S, kernel_h, kernel_w, self.boundary)
-        shp = [slices.shape[0], self.cri.C, kernel_h, kernel_w,
-               S.shape[-2], S.shape[-1], 1]
-        # [K, C, Hc, Wc, H, W, 1] -> [H, W, Hc, Wc, C, K, 1]
-        slices = slices.reshape(shp)
-        slices = slices.transpose(4, 5, 2, 3, 1, 0, 6)
-        return slices
+            shp = [H, W, Hc, Wc, self.cri.K]
+        slices = np.zeros(shp, dtype=self.dtype)
+        pad = [(0, Hc-1), (0, Wc-1)] + [(0, 0) for _ in range(S.ndim-2)]
+        Sp = np.pad(S, pad, 'wrap')
+        for h in range(Hc):
+            for w in range(Wc):
+                slices[:, :, h, w, ...] = Sp[h:h+H, w:w+W, ...]
+        if self.cri.C == 1:
+            slices = np.expand_dims(slices, 4)
+        return np.expand_dims(slices, -1)
 
     @property
     def alpha(self):
@@ -465,11 +485,13 @@ class OnlineDictLearnSliceSurrogate(
     def evaluate(self, S, X):
         """Optionally evaluate functional values."""
         if self.opt['AccurateDFid']:
-            Df = sl.rfftn(self.D, self.cri.Nv, self.cri.axisN)
-            Xf = sl.rfftn(X, self.cri.Nv, self.cri.axisN)
-            Sf = sl.rfftn(S, self.cri.Nv, self.cri.axisN)
-            Ef = sl.inner(Df, Xf, axis=self.cri.axisM) - Sf
-            dfd = sl.rfl2norm2(Ef, S.shape, axis=self.cri.axisN) / 2.
+            cri_s = cr.CSC_ConvRepIndexing(self.getdict(), S.squeeze(),
+                                           dimK=None, dimN=2)
+            Df = sl.rfftn(self.D.reshape(cri_s.shpD), cri_s.Nv, cri_s.axisN)
+            Xf = sl.rfftn(X.reshape(cri_s.shpX), cri_s.Nv, cri_s.axisN)
+            Sf = sl.rfftn(S.reshape(cri_s.shpS), cri_s.Nv, cri_s.axisN)
+            Ef = sl.inner(Df, Xf, axis=cri_s.axisM) - Sf
+            dfd = sl.rfl2norm2(Ef, S.shape, axis=cri_s.axisN) / 2.
             rl1 = np.sum(np.abs(X))
             evl = dict(DFid=dfd, RegL1=rl1, ObjFun=dfd+self.lmbda*rl1)
         else:
