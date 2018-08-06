@@ -141,7 +141,7 @@ class OnlineDictLearnDenseSurrogate(
 
     def __new__(cls, *args, **kwargs):
         instance = super(OnlineDictLearnDenseSurrogate, cls).__new__(cls)
-        instance.timer = su.Timer(['init', 'solve', 'solve_wo_eval',
+        instance.timer = su.Timer(['init', 'solve', 'solve_wo_eval', 'hessian',
                                    'xstep', 'dstep'])
         instance.timer.start('init')
         return instance
@@ -195,9 +195,11 @@ class OnlineDictLearnDenseSurrogate(
 
         # update At and Bt
         # (H, W, 1, K, M) -> (H, W, Hc, Wc, 1, K, M)
+        self.timer.start('hessian')
         Xe = self.extend_code(X)
         self.update_At(Xe)
         self.update_Bt(Xe, S)
+        self.timer.stop('hessian')
         self.Lmbda = self.dtype.type(self.alpha*self.Lmbda+1)
 
         # update dictionary with FISTA
