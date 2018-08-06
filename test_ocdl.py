@@ -20,6 +20,7 @@ from sporco.admm import cbpdn
 from sporco.admm import parcbpdn
 import image_dataset
 from cifar import CIFAR10
+from benchmark_ocdl import setup_logging, dataset_loader
 
 
 def parse_args():
@@ -34,24 +35,6 @@ def parse_args():
     parser.add_argument('--no_tikhonov_filter', action='store_true', help='No tikhonov low pass filtering is applied')
     parser.add_argument('--num_samples', default=-1, type=int, help='Number of test samples to use; -1 means use all')
     return parser.parse_args()
-
-
-def setup_logging(name, filename=None):
-    """Utility for every script to call on top-level.
-    If filename is not None, then also log to the filename."""
-    FORMAT = '[%(levelname)s %(asctime)s] %(filename)s:%(lineno)4d: %(message)s'
-    DATEFMT = '%Y-%m-%d %H:%M:%S'
-    logging.root.handlers = []
-    handlers = [logging.StreamHandler(stream=sys.stdout)]
-    if filename is not None:
-        handlers.append(logging.FileHandler(filename, mode='w'))
-    logging.basicConfig(
-        level=logging.INFO,
-        format=FORMAT,
-        datefmt=DATEFMT,
-        handlers=handlers
-    )
-    return logging.getLogger(name)
 
 
 def get_stats_from_dict(Dd, args, test_blob):
@@ -177,28 +160,6 @@ def plot_statistics(args, time_stats=None, fnc_stats=None, class_legend=None):
         args.dataset
     )), bbox_inches='tight')
     plt.show()
-
-
-def dataset_loader(name, args):
-    """Return train and test dataset by name."""
-    if name == 'fruit' or name == 'city':
-        train_blob = image_dataset.create_image_blob(name, np.float32,
-                                                     scaled=True, gray=False)
-        test_blob = image_dataset.create_image_blob('singles', np.float32,
-                                                    scaled=True, gray=False)
-    elif name == 'cifar10':
-        cifar10_train = CIFAR10(root='.cifar10', train=True, download=True,
-                                data_type=np.float32)
-        cifar10_test = CIFAR10(root='.cifar10', train=False, download=True,
-                               data_type=np.float32)
-        train_blob = cifar10_train.train_data / 255.
-        test_blob = cifar10_test.test_data / 255.
-        train_blob = train_blob.transpose(2, 3, 1, 0)
-        test_blob = test_blob.transpose(2, 3, 1, 0)
-        del cifar10_train, cifar10_test
-    else:
-        raise NotImplementedError
-    return (train_blob, test_blob)
 
 
 def main():
