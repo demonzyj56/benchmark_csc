@@ -115,7 +115,7 @@ class OnlineDictLearnDenseSurrogate(
         defaults = {
             'Verbose': True, 'StatusHeader': True, 'IterTimer': 'solve',
             'MaxMainIter': 1000, 'Callback': None, 'AccurateDFid': False,
-            'Boundary': 'circulant_front', 'DataType': None,
+            'DataType': None,
             'CBPDN': copy.deepcopy(cbpdn.ConvBPDN.Options.defaults),
             'CCMOD': copy.deepcopy(SpatialFISTA.Options.defaults),
             'OCDL': {
@@ -161,7 +161,6 @@ class OnlineDictLearnDenseSurrogate(
         self.j = 0
 
         self.set_attr('lmbda', lmbda, dtype=self.dtype)
-        self.set_attr('boundary', opt['Boundary'], dval='circulant_back')
 
         D0 = Pcn(D0, opt['CCMOD', 'ZeroMean'])
 
@@ -363,29 +362,13 @@ class OnlineDictLearnDenseSurrogate(
         """Extend 5-dim X to 7-dim Xe."""
         H, W = X.shape[:2]
         kernel_h, kernel_w = self.D.shape[:2]
-        if 1:
-            # (H, W, 1, K, M) -> (H, W, Hc, Wc, 1, K, M)
-            # (H, W, 1, K, M) -> (K, M, H, W) -> (K, M*Hc*Wc, H*W) ->
-            # (K, M, Hc, Wc, 1, H, W) -> (H, W, Hc, Wc, 1, K, M)
-            code = X.squeeze(2).transpose(2, 3, 0, 1)
-            code = im2slices(code, kernel_h, kernel_w, self.boundary)
-            shp = [code.shape[0], self.cri.M, kernel_h, kernel_w, 1, X.shape[0], X.shape[1]]
-            code = code.reshape(shp)
-            code = code.transpose(5, 6, 2, 3, 4, 0, 1)
-        else:
-            code = np.zeros((H, W, kernel_h, kernel_w, 1, self.cri.K, self.cri.M), dtype=self.dtype)
-            if self.boundary == 'circulant_back':
-                pad = [(0, kernel_h-1), (0, kernel_w-1)]
-            elif self.boundary == 'circulant_front':
-                pad = [(kernel_h-1, 0), (kernel_w-1, 0)]
-            else:
-                raise NotImplementedError
-            pad += [(0, 0) for _ in range(X.ndim-2)]
-            Xp = np.pad(X, pad, 'wrap')
-            for h in range(H):
-                for w in range(W):
-                    slices = Xp[h:h+kernel_h, w:w+kernel_w, ...]
-                    code[h, w, ...] = slices
+        code = np.zeros((H, W, kernel_h, kernel_w, 1, self.cri.K, self.cri.M), dtype=self.dtype)
+        pad = [(kernel_h-1, 0), (kernel_w-1, 0)] + [(0, 0) for _ in range(X.ndim-2)]
+        Xp = np.pad(X, pad, 'wrap')
+        for h in range(kernel_h):
+            for w in range(kernel_w):
+                slices = Xp[h:h+H, w:w+W, ...]
+                code[:, :, kernel_h-1-h, kernel_w-1-w, ...] = slices
         return code
 
     def getitstat(self):
