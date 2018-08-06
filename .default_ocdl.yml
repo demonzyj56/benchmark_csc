@@ -71,7 +71,7 @@ OnlineDictLearnDenseSurrogate:
         DiminishingTol: True
 
 ConvBPDN:
-    Verbose: True
+    Verbose: False
     MaxMainIter: 100
     RelStopTol: 0.005
     AuxVarObj: False

@@ -17,6 +17,7 @@ import torch
 import sporco.util as su
 import sporco.metric as sm
 from sporco.admm import cbpdn
+from sporco.admm import parcbpdn
 import image_dataset
 from cifar import CIFAR10
 
@@ -69,7 +70,8 @@ def get_stats_from_dict(Dd, args, test_blob):
     """
     logger = logging.getLogger(__name__)
     opt = yaml.load(open(args.cfg, 'r'))
-    opt = cbpdn.ConvBPDN.Options(opt.get('CBPDN', None))
+    opt = cbpdn.ConvBPDN.Options(opt.get('ConvBPDN', None))
+    #  opt = parcbpdn.ParConvBPDN.Options(opt.get('ConvBPDN', None))
     if not args.no_tikhonov_filter:
         sl, sh = su.tikhonov_filter(test_blob, 5.)
     else:
@@ -81,6 +83,7 @@ def get_stats_from_dict(Dd, args, test_blob):
         stats = []
         for idx, D in enumerate(Ds):
             solver = cbpdn.ConvBPDN(D, sh, args.lmbda, opt=opt)
+            #  solver = parcbpdn.ParConvBPDN(D, sh, args.lmbda, opt=opt)
             solver.solve()
             fnc = solver.getitstat().ObjFun[-1]
             shr = solver.reconstruct().squeeze()
@@ -101,7 +104,7 @@ def load_stats_from_folder(args):
     """Load dictionaries and other statistics from output path."""
     assert os.path.exists(args.output_path)
     cfg = yaml.load(open(args.cfg, 'r'))
-    del cfg['CBPDN']
+    del cfg['ConvBPDN']
     Dd = {}
     stats = {}
     for k in cfg.keys():
@@ -126,9 +129,54 @@ def load_stats_from_folder(args):
     return Dd, stats
 
 
-def plot_statistics(args, time_stats, fnc_stats=None):
+def plot_statistics(args, time_stats=None, fnc_stats=None, class_legend=None):
     """Plot obtain statistics."""
-    raise NotImplementedError
+    if fnc_stats is None:
+        path = os.path.join(args.output_path, 'final_stats.pkl')
+        assert os.path.exists(path)
+        fnc_stats = pickle.load(open(path, 'rb'))
+    if time_stats is None:
+        time_stats = {}
+        for k in fnc_stats.keys():
+            p = os.path.join(args.output_path, '{:s}.{:s}_stats.npy'.format(
+                args.dataset, k
+            ))
+            assert os.path.exists(p)
+            ss = np.load(p)
+            time_stats.update({k: ss[0][ss[1].index('Time')]})
+    fncs, psnrs = {}, {}
+    for k, v in fnc_stats.items():
+        fnc, psnr = list(zip(*v))
+        fncs.update({k: fnc})
+        psnrs.update({k: psnr})
+    # plot objective value
+    for k, v in time_stats.items():
+        if class_legend is not None:
+            label = class_legend.get(k, k)
+        else:
+            label = k
+        plt.plot(v, fncs[k], label=label)
+        plt.legend()
+        plt.xlabel('Time (s)')
+        plt.ylabel('Test set objective')
+    plt.savefig(os.path.join(args.output_path, '{:s}.ObjFun.pdf'.format(
+        args.dataset
+    )), bbox_inches='tight')
+    plt.show()
+    # plot psnr
+    for k, v in time_stats.items():
+        if class_legend is not None:
+            label = class_legend.get(k, k)
+        else:
+            label = k
+        plt.plot(v, psnrs[k], label=label)
+        plt.legend()
+        plt.xlabel('Time (s)')
+        plt.ylabel('PSNR (dB)')
+    plt.savefig(os.path.join(args.output_path, '{:s}.PSNR.pdf'.format(
+        args.dataset
+    )), bbox_inches='tight')
+    plt.show()
 
 
 def dataset_loader(name, args):
@@ -160,7 +208,7 @@ def main():
         os.makedirs(args.output_path)
     log_name = os.path.join(
         args.output_path,
-        '{:s}.{:s}.{:%Y-%m-%d_%H-%M-%S}.log'.format(
+        '{:s}.{:s}.{:%Y-%m-%d_%H-%M-%S}.test.log'.format(
             args.name,
             args.dataset,
             datetime.datetime.now(),
