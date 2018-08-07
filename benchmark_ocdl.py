@@ -27,7 +27,7 @@ from sporco.dictlrn.onlinecdl import OnlineConvBPDNDictLearn
 from fista_slice_online import OnlineDictLearnSliceSurrogate
 from onlinecdl_surrogate import OnlineDictLearnDenseSurrogate
 from datasets import get_dataset, BlobLoader
-from setup_logging import setup_logging
+from utils import setup_logging
 
 
 def parse_args():

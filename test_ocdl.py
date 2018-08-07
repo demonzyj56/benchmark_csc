@@ -19,7 +19,7 @@ import sporco.util as su
 import sporco.metric as sm
 from sporco.admm import cbpdn
 from sporco.admm import parcbpdn
-from setup_logging import setup_logging
+from utils import setup_logging
 from datasets import get_dataset, BlobLoader
 
 
