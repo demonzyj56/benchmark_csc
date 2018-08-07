@@ -6,14 +6,20 @@ import torch.utils.data as data
 class BlobLoader(object):
     """An iterator to wrap over data."""
 
-    def __init__(self, dataset, epochs, batch_size):
+    def __init__(self, dataset, epochs=None, batch_size=None):
         self.dataset = dataset
-        self.epochs = epochs
-        self.batch_size = batch_size
         if isinstance(self.dataset, data.Dataset):
             self.size = len(self.dataset)
         else:
             self.size = self.dataset.shape[-1]
+        if epochs is not None:
+            self.epochs = epochs
+        else:
+            self.epochs = self.size
+        if batch_size is not None:
+            self.batch_size = batch_size
+        else:
+            self.batch_size = 1
         assert self.batch_size <= self.size
         self.e = 0
         self.cur = 0
