@@ -173,8 +173,7 @@ def plot_statistics(args, time_stats=None, fnc_stats=None, class_legend=None):
 def main():
     """Main entry."""
     args = parse_args()
-    if not os.path.exists(args.output_path):
-        os.makedirs(args.output_path)
+    assert os.path.exists(args.output_path)
     log_name = os.path.join(
         args.output_path,
         '{:s}.{:s}.{:%Y-%m-%d_%H-%M-%S}.test.log'.format(
