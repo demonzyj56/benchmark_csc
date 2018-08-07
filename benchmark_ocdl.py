@@ -12,6 +12,7 @@ import datetime
 import logging
 import os
 import pprint
+import pickle
 import sys
 import yaml
 import pyfftw  # pylint: disable=unused-import
@@ -26,6 +27,7 @@ from sporco.dictlrn.onlinecdl import OnlineConvBPDNDictLearn
 from fista_slice_online import OnlineDictLearnSliceSurrogate
 from onlinecdl_surrogate import OnlineDictLearnDenseSurrogate
 from datasets import get_dataset, BlobLoader
+from setup_logging import setup_logging
 
 
 def parse_args():
@@ -46,24 +48,6 @@ def parse_args():
     return parser.parse_args()
 
 
-def setup_logging(name, filename=None):
-    """Utility for every script to call on top-level.
-    If filename is not None, then also log to the filename."""
-    FORMAT = '[%(levelname)s %(asctime)s] %(filename)s:%(lineno)4d: %(message)s'
-    DATEFMT = '%Y-%m-%d %H:%M:%S'
-    logging.root.handlers = []
-    handlers = [logging.StreamHandler(stream=sys.stdout)]
-    if filename is not None:
-        handlers.append(logging.FileHandler(filename, mode='w'))
-    logging.basicConfig(
-        level=logging.INFO,
-        format=FORMAT,
-        datefmt=DATEFMT,
-        handlers=handlers
-    )
-    return logging.getLogger(name)
-
-
 def train_models(solvers, train_blob, args):
     """Function for training every solvers."""
     if args.use_gray:
@@ -75,6 +59,7 @@ def train_models(solvers, train_blob, args):
     sample = loader.random_sample()
     solvers = {k: sol_name(D0, sample, args.lmbda, opt=opt) for
                k, (sol_name, opt) in solvers.items()}
+    dname = args.dataset if not args.use_gray else args.dataset+'.gray'
     for e, blob in enumerate(loader):
         if not args.no_tikhonov_filter:
             # fix lambda to be 5
@@ -82,13 +67,14 @@ def train_models(solvers, train_blob, args):
         for k, s in solvers.items():
             s.solve(blob)
             path = os.path.join(args.output_path, k)
-            np.save(os.path.join(path, f'{args.dataset}.{e}.npy'),
+            np.save(os.path.join(path, '{}.{}.npy'.format(dname, e)),
                     s.getdict().squeeze())
     return solvers
 
 
 def plot_and_save_statistics(solvers, args):
     """Plot some desired statistics."""
+    dname = args.dataset if not args.use_gray else args.dataset+'.gray'
     for k, v in solvers.items():
         # save dictionaries visualization
         plt.clf()
@@ -97,12 +83,19 @@ def plot_and_save_statistics(solvers, args):
             plt.imshow(su.tiledict(d), cmap='gray')
         else:
             plt.imshow(su.tiledict(d))
-        plt.savefig(os.path.join(args.output_path, k, f'{args.dataset}.pdf'),
+        plt.savefig(os.path.join(args.output_path, k, f'{dname}.pdf'),
                     bbox_inches='tight')
         # save statistics
         stats_arr = su.ntpl2array(v.getitstat())
-        np.save(os.path.join(args.output_path, k, f'{args.dataset}.npy'),
+        np.save(os.path.join(args.output_path, k, f'{dname}.stats.npy'),
                 stats_arr)
+        # we save time separately
+        time_stats = {'Time': v.getitstat().Time}
+        pickle.dump(
+            time_stats,
+            open(os.path.join(args.output_path, k,
+                              f'{dname}.time_stats.pkl'), 'wb')
+        )
     if 1:
         plt.clf()
         nsol = len(solvers)
@@ -131,6 +124,7 @@ def main():
         )
     )
     logger = setup_logging(__name__, log_name)
+    logger.info('args:')
     logger.info(pprint.pformat(args))
 
     # set random seed

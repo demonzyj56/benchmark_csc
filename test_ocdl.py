@@ -6,6 +6,7 @@ import datetime
 import glob
 import logging
 import pickle
+import pprint
 import os
 import sys
 import yaml
@@ -18,9 +19,8 @@ import sporco.util as su
 import sporco.metric as sm
 from sporco.admm import cbpdn
 from sporco.admm import parcbpdn
-import image_dataset
-from cifar import CIFAR10
-from benchmark_ocdl import setup_logging, dataset_loader
+from setup_logging import setup_logging
+from datasets import get_dataset, BlobLoader
 
 
 def parse_args():
@@ -33,13 +33,13 @@ def parse_args():
     parser.add_argument('--cfg', default='.default_ocdl.yml', type=str, help='Config yaml file for solvers')
     parser.add_argument('--rng_seed', default=-1, type=int, help='Random seed to use; negative values mean dont set')
     parser.add_argument('--no_tikhonov_filter', action='store_true', help='No tikhonov low pass filtering is applied')
-    parser.add_argument('--num_samples', default=-1, type=int, help='Number of test samples to use; -1 means use all')
+    parser.add_argument('--use_gray', action='store_true', help='Use grayscale image instead of color image')
     return parser.parse_args()
 
 
 def get_stats_from_dict(Dd, args, test_blob):
     """Test function for obtaining functional values and PSNR for each
-    data point at test set.
+    data point at test set. This only works for blob data.
 
     Parameters
     ----------
@@ -51,6 +51,7 @@ def get_stats_from_dict(Dd, args, test_blob):
     test_blob: numpy.ndarray
         If not None, then it holds the test images.
     """
+    dname = args.dataset if not args.use_gray else args.dataset+'.gray'
     logger = logging.getLogger(__name__)
     opt = yaml.load(open(args.cfg, 'r'))
     opt = cbpdn.ConvBPDN.Options(opt.get('ConvBPDN', None))
@@ -71,67 +72,75 @@ def get_stats_from_dict(Dd, args, test_blob):
             fnc = solver.getitstat().ObjFun[-1]
             shr = solver.reconstruct().squeeze()
             imgr = sl + shr
-            psnr = sm.psnr(test_blob, imgr)
+            psnr = 0.
+            for jdx in range(test_blob.shape[-1]):
+                psnr += sm.psnr(test_blob[..., jdx], imgr[..., jdx], rng=1.)
+            psnr /= test_blob.shape[-1]
             stats.append((fnc, psnr))
             del solver, imgr
             logger.info('%s %d/%d: ObjFun: %.2f, PSNR: %.2f',
                         name, idx+1, len(Ds), fnc, psnr)
         model_stats.update({name: stats})
-    path = os.path.join(args.output_path, 'final_stats.pkl')
+    path = os.path.join(args.output_path, f'{dname}.final_stats.pkl')
     logger.info('Saving final statistics to %s', path)
     pickle.dump(model_stats, open(path, 'wb'))
     return model_stats
 
 
-def load_stats_from_folder(args):
-    """Load dictionaries and other statistics from output path."""
-    assert os.path.exists(args.output_path)
+def load_dict(args):
+    """Load dictionaries from output path."""
+    dname = args.dataset if not args.use_gray else args.dataset+'.gray'
     cfg = yaml.load(open(args.cfg, 'r'))
     del cfg['ConvBPDN']
     Dd = {}
-    stats = {}
     for k in cfg.keys():
         # load all dicts
         p = os.path.join(args.output_path, k)
         assert os.path.exists(p)
-        npy_path = os.path.join(p, '{:s}.*.npy'.format(args.dataset))
+        npy_path = os.path.join(p, '{:s}.*.npy'.format(dname))
         npy_path = glob.glob(npy_path)
         assert all([os.path.exists(pp) for pp in npy_path])
         # sort paths according to index
         npy_path = sorted(npy_path, key=lambda t: int(t.split('.')[-2]))
         Ds = [np.load(pp) for pp in npy_path]
         Dd.update({k: Ds})
+    return Dd
 
-        # load statistics
-        stats_p = os.path.join(args.output_path, '{:s}.{:s}_stats.npy'.format(
-            args.dataset, k
-        ))
-        assert os.path.exists(stats_p)
-        stats.update({k: np.load(stats_p)})
 
-    return Dd, stats
+def load_time_stats(args):
+    """Load time statistics from output path."""
+    dname = args.dataset if not args.use_gray else args.dataset+'.gray'
+    cfg = yaml.load(open(args.cfg, 'r'))
+    del cfg['ConvBPDN']
+    time_stats = {}
+    for k in cfg.keys():
+        p = os.path.join(args.output_path, k, f'{dname}.time_stats.pkl')
+        if os.path.exists(p):
+            s = pickle.load(open(p, 'rb'))
+            time_stats.update({k: s['Time']})
+        else:
+            p = os.path.join(args.output_path, k, f'{dname}.stats.npy')
+            assert os.path.exists(p)
+            s = np.load(p)
+            time_stats.update({k: s[0][s[1].index('Time')]})
+    return time_stats
 
 
 def plot_statistics(args, time_stats=None, fnc_stats=None, class_legend=None):
-    """Plot obtain statistics."""
-    if fnc_stats is None:
-        path = os.path.join(args.output_path, 'final_stats.pkl')
-        assert os.path.exists(path)
-        fnc_stats = pickle.load(open(path, 'rb'))
+    """Plot obtained statistics."""
+    dname = args.dataset if not args.use_gray else args.dataset+'.gray'
     if time_stats is None:
-        time_stats = {}
-        for k in fnc_stats.keys():
-            p = os.path.join(args.output_path, '{:s}.{:s}_stats.npy'.format(
-                args.dataset, k
-            ))
-            assert os.path.exists(p)
-            ss = np.load(p)
-            time_stats.update({k: ss[0][ss[1].index('Time')]})
+        time_stats = load_time_stats(args)
+    if fnc_stats is None:
+        p = os.path.join(args.output_path, f'{dname}.final_stats.npy')
+        fnc_stats = np.load(p)
+
     fncs, psnrs = {}, {}
     for k, v in fnc_stats.items():
         fnc, psnr = list(zip(*v))
         fncs.update({k: fnc})
         psnrs.update({k: psnr})
+
     # plot objective value
     for k, v in time_stats.items():
         if class_legend is not None:
@@ -142,10 +151,10 @@ def plot_statistics(args, time_stats=None, fnc_stats=None, class_legend=None):
         plt.legend()
         plt.xlabel('Time (s)')
         plt.ylabel('Test set objective')
-    plt.savefig(os.path.join(args.output_path, '{:s}.ObjFun.pdf'.format(
-        args.dataset
-    )), bbox_inches='tight')
+    plt.savefig(os.path.join(args.output_path, f'{dname}.ObjFun.pdf'),
+                bbox_inches='tight')
     plt.show()
+
     # plot psnr
     for k, v in time_stats.items():
         if class_legend is not None:
@@ -156,9 +165,8 @@ def plot_statistics(args, time_stats=None, fnc_stats=None, class_legend=None):
         plt.legend()
         plt.xlabel('Time (s)')
         plt.ylabel('PSNR (dB)')
-    plt.savefig(os.path.join(args.output_path, '{:s}.PSNR.pdf'.format(
-        args.dataset
-    )), bbox_inches='tight')
+    plt.savefig(os.path.join(args.output_path, f'{dname}.PSNR.pdf'),
+                bbox_inches='tight')
     plt.show()
 
 
@@ -176,22 +184,26 @@ def main():
         )
     )
     logger = setup_logging(__name__, log_name)
+    logger.info('args')
+    logger.info(pprint.pformat(args))
 
     # set random seed
     if args.rng_seed >= 0:
         np.random.seed(args.rng_seed)
         torch.manual_seed(args.rng_seed)
 
-    _, test_blob = dataset_loader(args.dataset, args)
-    if args.num_samples > 0 and args.num_samples < test_blob.shape[-1]:
-        logger.info('Sampling test images: %d -> %d', test_blob.shape[-1],
-                    args.num_samples)
-        selected = np.random.choice(test_blob.shape[-1], args.num_samples,
-                                    replace=False)
-        test_blob = test_blob[..., selected]
-    Dd, time_stats = load_stats_from_folder(args)
+    test_blob = get_dataset(args.dataset, train=False, gray=args.use_gray)
+
+    # load all snapshots of dictionaries
+    Dd = load_dict(args)
+
+    # compute functional values and PSNRs from dictionaries
     fnc_stats = get_stats_from_dict(Dd, args, test_blob)
-    time_stats = {k: v[0][v[1].index('Time')] for k, v in time_stats.items()}
+
+    # load time statistics
+    time_stats = load_time_stats(args)
+
+    # plot statistics
     plot_statistics(args, time_stats, fnc_stats)
 
 
