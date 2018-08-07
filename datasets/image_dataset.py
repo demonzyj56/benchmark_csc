@@ -7,6 +7,9 @@ import cv2
 logger = logging.getLogger(__name__)
 
 
+__THIS_DIR = os.path.dirname(__file__)
+
+
 def load_image(filename, dtype=np.float32, scaled=True, gray=False):
     """Load image from filename.
 
@@ -30,6 +33,7 @@ def load_image(filename, dtype=np.float32, scaled=True, gray=False):
         image, then the color channel is organized in RGB order.  If it is a
         grayscale image, the last dimension is always 1.
     """
+    filename = os.path.join(__THIS_DIR, '..', filename)
     assert os.path.exists(filename), \
         'Path does not exist: {}'.format(filename)
     image_name = os.path.split(filename)[-1]
@@ -53,24 +57,24 @@ def load_image(filename, dtype=np.float32, scaled=True, gray=False):
 
 
 __image_list = {
-    'lena': './images/ece533/lena.ppm',
-    'barbara': './images/sporco_get_images/standard/barbara.bmp',
-    'boat.gray': './images/misc/boat.512.tiff',
-    'house': './images/misc/4.1.05.tiff',
-    'peppers': './images/misc/4.2.07.tiff',
-    'cameraman.gray': './images/ece533/cameraman.tif',
-    'man.gray': './images/sporco_get_images/standard/man.grey.tiff',
-    'mandrill': './images/sporco_get_images/standard/mandrill.tiff',
-    'monarch': './images/sporco_get_images/standard/monarch.png',
-    'fruit': ['./images/FCSC/Images/fruit_100_100/{}.jpg'.format(i+1)
+    'lena': 'images/ece533/lena.ppm',
+    'barbara': 'images/sporco_get_images/standard/barbara.bmp',
+    'boat.gray': 'images/misc/boat.512.tiff',
+    'house': 'images/misc/4.1.05.tiff',
+    'peppers': 'images/misc/4.2.07.tiff',
+    'cameraman.gray': 'images/ece533/cameraman.tif',
+    'man.gray': 'images/sporco_get_images/standard/man.grey.tiff',
+    'mandrill': 'images/sporco_get_images/standard/mandrill.tiff',
+    'monarch': 'images/sporco_get_images/standard/monarch.png',
+    'fruit': ['images/FCSC/Images/fruit_100_100/{}.jpg'.format(i+1)
               for i in range(10)],
-    'city': ['./images/FCSC/Images/city_100_100/{}.jpg'.format(i+1)
+    'city': ['images/FCSC/Images/city_100_100/{}.jpg'.format(i+1)
              for i in range(10)],
     'singles': [  # used as test images for fruit and city
-        './images/FCSC/Images/singles/test1/test1.jpg',
-        './images/FCSC/Images/singles/test2/test2.jpg',
-        './images/FCSC/Images/singles/test3/test3.jpg',
-        './images/FCSC/Images/singles/test4/test.jpg',
+        'images/FCSC/Images/singles/test1/test1.jpg',
+        'images/FCSC/Images/singles/test2/test2.jpg',
+        'images/FCSC/Images/singles/test3/test3.jpg',
+        'images/FCSC/Images/singles/test4/test.jpg',
     ]
 }
 

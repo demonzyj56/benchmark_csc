@@ -4,7 +4,7 @@
 import os
 import unittest
 import numpy as np
-import image_dataset
+import datasets.image_dataset as image_dataset
 
 
 class TestImageDataset(unittest.TestCase):
