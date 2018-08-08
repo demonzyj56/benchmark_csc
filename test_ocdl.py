@@ -3,11 +3,11 @@
 """Test script for online convolutional sparse coding."""
 import argparse
 import datetime
-import glob
 import logging
 import pickle
 import pprint
 import os
+import re
 import sys
 import yaml
 import pyfftw  # pylint: disable=unused-import
@@ -89,16 +89,17 @@ def get_stats_from_dict(Dd, args, test_blob):
 
 def load_dict(args):
     """Load dictionaries from output path."""
-    dname = args.dataset if not args.use_gray else args.dataset+'.gray'
+    dname = args.dataset if not args.use_gray else args.dataset+r'\.gray'
     cfg = yaml.load(open(args.cfg, 'r'))
     del cfg['ConvBPDN']
     Dd = {}
     for k in cfg.keys():
         # load all dicts
-        p = os.path.join(args.output_path, k)
-        assert os.path.exists(p)
-        npy_path = os.path.join(p, '{:s}.*.npy'.format(dname))
-        npy_path = glob.glob(npy_path)
+        base_dir = os.path.join(args.output_path, k)
+        files = os.listdir(base_dir)
+        pattern = re.compile(r'{:s}\.[0-9]+\.npy'.format(dname))
+        files = [f for f in files if pattern.match(f) is not None]
+        npy_path = [os.path.join(base_dir, f) for f in files]
         assert all([os.path.exists(pp) for pp in npy_path])
         # sort paths according to index
         npy_path = sorted(npy_path, key=lambda t: int(t.split('.')[-2]))
