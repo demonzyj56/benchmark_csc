@@ -69,6 +69,9 @@ def train_models(solvers, train_blob, args):
             path = os.path.join(args.output_path, k)
             np.save(os.path.join(path, '{}.{}.npy'.format(dname, e)),
                     s.getdict().squeeze())
+    # snapshot iteration record
+    sio.savemat(os.path.join(args.output_path, 'iter_record.mat'),
+                {'iter_record': loader.record})
     return solvers
 
 

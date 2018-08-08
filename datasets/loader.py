@@ -24,6 +24,7 @@ class BlobLoader(object):
         self.e = 0
         self.cur = 0
         self.idx = np.random.permutation(self.size)
+        self.record = []
 
     def __iter__(self):
         self.e = 0
@@ -52,6 +53,8 @@ class BlobLoader(object):
         else:
             imgs = self.dataset[...,
                                 self.idx[self.cur:self.cur+self.batch_size]]
+        self.record += \
+            self.idx[self.cur:self.cur+self.batch_size].ravel().tolist()
         return imgs
 
     def random_sample(self):
