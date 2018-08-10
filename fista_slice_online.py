@@ -14,9 +14,11 @@ from sporco import common, cdict
 from sporco.dictlrn import dictlrn
 from sporco.admm import cbpdn
 from sporco.fista import fista
+import sporco_cuda.cbpdn as cucbpdn
 import torch
 
-from dictlrn_slice import Pcn
+#  from dictlrn_slice import Pcn
+from utils import Pcn2 as Pcn
 from im2slices import im2slices, slices2im
 
 logger = logging.getLogger(__name__)
@@ -216,6 +218,7 @@ class OnlineDictLearnSliceSurrogate(
             'OCDL': {
                 'p': 1.,  # forgetting exponent
                 'DiminishingTol': False,  # diminishing tolerance for FISTA
+                'CUCBPDN': False,  # use gpu version of cbpdn
             }
         }
         defaults['CBPDN'].update({
@@ -310,11 +313,16 @@ class OnlineDictLearnSliceSurrogate(
 
         # Initialize with CBPDN
         self.timer.start('xstep')
-        xstep = cbpdn.ConvBPDN(self.getdict(), S, self.lmbda,
-                               opt=self.opt['CBPDN'])
-        xstep.solve()
+        copt = copy.deepcopy(self.opt['CBPDN'])
+        if self.opt['OCDL', 'CUCBPDN']:
+            X = cucbpdn.cbpdn(self.getdict(), S.squeeze(), self.lmbda, opt=copt)
+            X = np.asarray(X.reshape(self.cri.shpX), dtype=self.dtype)
+        else:
+            xstep = cbpdn.ConvBPDN(self.getdict(), S, self.lmbda, opt=copt)
+            xstep.solve()
+            X = np.asarray(xstep.getcoef().reshape(self.cri.shpX),
+                           dtype=self.dtype)
         self.timer.stop('xstep')
-        X = np.asarray(xstep.getcoef().reshape(self.cri.shpX), dtype=self.dtype)
 
         # update At and Bt
         self.timer.start('hessian')
@@ -343,8 +351,12 @@ class OnlineDictLearnSliceSurrogate(
         self.timer.start('solve_wo_eval')
 
         t = self.timer.elapsed(self.opt['IterTimer'])
-        itst = self.isc.iterstats(self.j, t, xstep.itstat[-1], dstep.itstat[-1],
-                                  evl)
+        if self.opt['OCDL', 'CUCBPDN']:
+            # this requires a slight modification of dictlrn
+            itst = self.isc.iterstats(self.j, t, None, dstep.itstat[-1], evl)
+        else:
+            itst = self.isc.iterstats(self.j, t, xstep.itstat[-1],
+                                      dstep.itstat[-1], evl)
         self.itstat.append(itst)
 
         if self.opt['Verbose']:
@@ -377,10 +389,12 @@ class OnlineDictLearnSliceSurrogate(
                   u('ℓ1'): 'RegL1', 'r_X': 'XPrRsdl', 's_X': 'XDlRsdl',
                   u('ρ_X'): 'XRho', 'Itn_X': 'X_It',
                   'r_D': 'D_Rsdl', 'L_D': 'D_L', 'Itn_D': 'D_It', 'Time': 'Time'}
+        _evlmap = {'ObjFun': 'ObjFun', 'DFid': 'DFid', 'RegL1': 'RegL1'}
         if self.opt['AccurateDFid']:
-            evlmap = {'ObjFun': 'ObjFun', 'DFid': 'DFid', 'RegL1': 'RegL1'}
+            evlmap = _evlmap
         else:
             evlmap = {}
+            isxmap.update(_evlmap)
         return dictlrn.IterStatsConfig(
             isfld=isfld, isxmap=isxmap, isdmap=isdmap, evlmap=evlmap,
             hdrtxt=hdrtxt, hdrmap=hdrmap,
