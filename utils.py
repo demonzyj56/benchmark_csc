@@ -1,6 +1,7 @@
-"""Utility function for setup logging."""
+"""Utility functions."""
 import logging
 import sys
+import numpy as np
 
 
 def setup_logging(name, filename=None):
@@ -19,3 +20,36 @@ def setup_logging(name, filename=None):
         handlers=handlers
     )
     return logging.getLogger(name)
+
+
+def Pcn(D, zm=True):
+    """Constraint set projection function that normalizes each dictionary
+    to unary norm.
+
+    Parameters
+    ----------
+    D: array
+        Input dictionary to normalize.
+    zm: bool
+        If true, then the columns are mean subtracted before normalization.
+    """
+    # sum or average over all but last axis
+    axis = tuple(range(D.ndim-1))
+    if zm:
+        D -= np.mean(D, axis=axis, keepdims=True)
+    norm = np.sqrt(np.sum(D**2, axis=axis, keepdims=True))
+    norm[norm == 0] = 1.
+    return np.asarray(D / norm, dtype=D.dtype)
+
+
+def Pcn2(D, zm=True):
+    """Projection function to normalize each dictionary to have norm less
+    or equal than one.
+    """
+    axis = tuple(range(D.ndim-1))
+    if zm:
+        D -= np.mean(D, axis=axis, keepdims=True)
+    norm = np.sqrt(np.sum(D**2, axis=axis, keepdims=True))
+    norm[norm == 0.] = 1.
+    norm[norm < 1.] = 1.
+    return np.asarray(D / norm, dtype=D.dtype)
