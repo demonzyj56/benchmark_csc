@@ -16,7 +16,8 @@ from sporco.dictlrn import dictlrn
 from sporco.admm import cbpdn
 from sporco.fista import fista
 
-from dictlrn_slice import Pcn
+#  from dictlrn_slice import Pcn
+from utils import Pcn2 as Pcn
 from im2slices import im2slices
 from fista_slice_online import einsum
 
@@ -255,10 +256,12 @@ class OnlineDictLearnDenseSurrogate(
                   u('ℓ1'): 'RegL1', 'r_X': 'XPrRsdl', 's_X': 'XDlRsdl',
                   u('ρ_X'): 'XRho', 'Itn_X': 'X_It',
                   'r_D': 'D_Rsdl', 'L_D': 'D_L', 'Itn_D': 'D_It', 'Time': 'Time'}
+        _evlmap = {'ObjFun': 'ObjFun', 'DFid': 'DFid', 'RegL1': 'RegL1'}
         if self.opt['AccurateDFid']:
-            evlmap = {'ObjFun': 'ObjFun', 'DFid': 'DFid', 'RegL1': 'RegL1'}
+            evlmap = _evlmap
         else:
             evlmap = {}
+            isxmap.update(_evlmap)
         return dictlrn.IterStatsConfig(
             isfld=isfld, isxmap=isxmap, isdmap=isdmap, evlmap=evlmap,
             hdrtxt=hdrtxt, hdrmap=hdrmap,
