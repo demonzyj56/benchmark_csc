@@ -12,13 +12,15 @@ import sys
 import yaml
 import pyfftw  # pylint: disable=unused-import
 import numpy as np
+from scipy import linalg
 import matplotlib.pyplot as plt
 from matplotlib.ticker import MaxNLocator
 import torch
 import sporco.util as su
 import sporco.metric as sm
+import sporco.linalg as spl
 from sporco.admm import cbpdn
-from sporco.admm import parcbpdn
+import sporco_cuda.cbpdn as cucbpdn
 from utils import setup_logging
 from datasets import get_dataset, BlobLoader
 
@@ -34,6 +36,7 @@ def parse_args():
     parser.add_argument('--rng_seed', default=-1, type=int, help='Random seed to use; negative values mean dont set')
     parser.add_argument('--no_tikhonov_filter', action='store_true', help='No tikhonov low pass filtering is applied')
     parser.add_argument('--use_gray', action='store_true', help='Use grayscale image instead of color image')
+    parser.add_argument('--use_gpu', action='store_true', help='Whether to use gpu impl of CBPDN to compute')
     return parser.parse_args()
 
 
@@ -78,6 +81,58 @@ def get_stats_from_dict(Dd, args, test_blob):
             psnr /= test_blob.shape[-1]
             stats.append((fnc, psnr))
             del solver, imgr
+            logger.info('%s %d/%d: ObjFun: %.2f, PSNR: %.2f',
+                        name, idx+1, len(Ds), fnc, psnr)
+        model_stats.update({name: stats})
+    path = os.path.join(args.output_path, f'{dname}.final_stats.pkl')
+    logger.info('Saving final statistics to %s', path)
+    pickle.dump(model_stats, open(path, 'wb'))
+    return model_stats
+
+
+def get_stats_from_dict_gpu(Dd, args, test_blob):
+    """Test function for obtaining functional values and PSNR for each
+    data point at test set. This only works for gray scale blob data, using
+    gpu implementation.
+
+    Parameters
+    ----------
+    Dd: dict
+        A dict mapping class names to a list of convolutional dictionaries,
+        each of which is a snapshot at one timestep.
+    args: ArgumentParser
+        Arguments from argument parser.
+    test_blob: numpy.ndarray
+        If not None, then it holds the test images.
+    """
+    assert args.use_gray, 'Only grayscale image is supported'
+    dname = args.dataset if not args.use_gray else args.dataset+'.gray'
+    logger = logging.getLogger(__name__)
+    opt = yaml.load(open(args.cfg, 'r'))
+    opt = cbpdn.ConvBPDN.Options(opt.get('ConvBPDN', None))
+    if not args.no_tikhonov_filter:
+        sl, sh = su.tikhonov_filter(test_blob, 5.)
+    else:
+        sl = 0.
+        sh = test_blob
+    model_stats = {}
+    for name, Ds in Dd.items():
+        logger.info('Testing solver %s', name)
+        stats = []
+        for idx, D in enumerate(Ds):
+            fnc = 0.
+            psnr = 0.
+            for jdx in range(test_blob.shape[-1]):
+                X = cucbpdn.cbpdn(D, sh[..., jdx].squeeze(), args.lmbda, opt=opt)
+                shr = np.sum(spl.fftconv(D, X), axis=2)
+                dfd = linalg.norm(shr.ravel()-sh[..., jdx].ravel())**2 / 2.
+                rl1 = linalg.norm(X.ravel(), 1)
+                obj = dfd + args.lmbda * rl1
+                fnc += obj
+                imgr = sl + shr
+                psnr += sm.psnr(imgr, test_blob[..., jdx].squeeze(), rng=1.)
+            psnr /= test_blob.shape[-1]
+            stats.append((fnc, psnr))
             logger.info('%s %d/%d: ObjFun: %.2f, PSNR: %.2f',
                         name, idx+1, len(Ds), fnc, psnr)
         model_stats.update({name: stats})
@@ -198,7 +253,10 @@ def main():
     Dd = load_dict(args)
 
     # compute functional values and PSNRs from dictionaries
-    fnc_stats = get_stats_from_dict(Dd, args, test_blob)
+    if not args.use_gpu:
+        fnc_stats = get_stats_from_dict(Dd, args, test_blob)
+    else:
+        fnc_stats = get_stats_from_dict_gpu(Dd, args, test_blob)
 
     # load time statistics
     time_stats = load_time_stats(args)
