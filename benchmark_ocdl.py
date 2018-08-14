@@ -235,7 +235,8 @@ def main():
 
     # legacy code for research
     if not args.no_legacy:
-        os.system('cp {:s}/iter_record.mat /backup/OCSC/datasets/{:s}_10/'.format(args.output_path, args.dataset))  # XXX
+        if args.dataset == 'city' or args.dataset == 'fruit':
+            os.system('cp {:s}/iter_record.mat /backup/OCSC/datasets/{:s}_10/'.format(args.output_path, args.dataset))  # XXX
 
 
 if __name__ == "__main__":
