@@ -27,9 +27,6 @@ def get_dataset(name, root=None, train=True, dtype=np.float32, scaled=True,
             blob = create_image_blob(name, dtype, scaled=scaled, gray=False)
         return blob
     elif name == 'cifar10':
-        if gray:
-            raise NotImplementedError('Only color images for CIFAR10 is '
-                                      'currently supported')
         if root is None:
             root = osp.join(__ROOT, '.cifar10')
         cifar10 = CIFAR10(root=root, train=train, download=True,
@@ -41,6 +38,9 @@ def get_dataset(name, root=None, train=True, dtype=np.float32, scaled=True,
         if scaled:
             blob /= 255.
         blob = blob.transpose(2, 3, 1, 0)
+        if gray:
+            blob = blob[:, :, 0, :] * 0.2989 + blob[:, :, 1, :] * 0.5870 + \
+                blob[:, :, 2, :] * 0.1140
         del cifar10
         return blob
     elif name == '17flowers':
