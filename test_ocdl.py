@@ -37,6 +37,7 @@ def parse_args():
     parser.add_argument('--no_tikhonov_filter', action='store_true', help='No tikhonov low pass filtering is applied')
     parser.add_argument('--use_gray', action='store_true', help='Use grayscale image instead of color image')
     parser.add_argument('--use_gpu', action='store_true', help='Whether to use gpu impl of CBPDN to compute')
+    parser.add_argument('--pad_boundary', action='store_true', help='Pad the boundary of test_blob with zeros')
     return parser.parse_args()
 
 
@@ -110,6 +111,12 @@ def get_stats_from_dict_gpu(Dd, args, test_blob):
     logger = logging.getLogger(__name__)
     opt = yaml.load(open(args.cfg, 'r'))
     opt = cbpdn.ConvBPDN.Options(opt.get('ConvBPDN', None))
+    if getattr(args, 'pad_boundary', False):
+        dummy = list(Dd.values())[0][0]
+        Hc, Wc = dummy.shape[:2]
+        assert Hc % 2 == 1 and Wc % 2 == 1
+        pad = [(Hc//2, Hc//2), (Wc//2, Wc//2)] + [(0, 0) for _ in range(test_blob.ndim-2)]
+        test_blob = np.pad(test_blob, pad, 'constant')
     if not args.no_tikhonov_filter:
         sl, sh = su.tikhonov_filter(test_blob, 5.)
     else:
@@ -130,7 +137,12 @@ def get_stats_from_dict_gpu(Dd, args, test_blob):
                 obj = dfd + args.lmbda * rl1
                 fnc += obj
                 imgr = sl + shr
-                psnr += sm.psnr(imgr, test_blob[..., jdx].squeeze(), rng=1.)
+                if getattr(args, 'pad_boundary', False):
+                    imgr = imgr[Hc//2:-(Hc//2), Wc//2:-(Wc//2), ...]
+                    img = test_blob[Hc//2:-(Hc//2), Wc//2:-(Wc//2), jdx]
+                    psnr += sm.psnr(imgr, img, rng=1.)
+                else:
+                    psnr += sm.psnr(imgr, test_blob[..., jdx].squeeze(), rng=1.)
             psnr /= test_blob.shape[-1]
             stats.append((fnc, psnr))
             logger.info('%s %d/%d: ObjFun: %.2f, PSNR: %.2f',
@@ -150,8 +162,14 @@ def load_dict(args):
     Dd = {}
     for k in cfg.keys():
         # load all dicts
-        base_dir = os.path.join(args.output_path, k)
-        files = os.listdir(base_dir)
+        try:
+            base_dir = os.path.join(args.output_path, k)
+            files = os.listdir(base_dir)
+        except:
+            logging.getLogger(__name__).info(
+                'Folder %s does not exist, skipping...', base_dir
+            )
+            continue
         pattern = re.compile(r'{:s}\.[0-9]+\.npy'.format(dname))
         files = [f for f in files if pattern.match(f) is not None]
         npy_path = [os.path.join(base_dir, f) for f in files]
@@ -170,6 +188,12 @@ def load_time_stats(args):
     del cfg['ConvBPDN']
     time_stats = {}
     for k in cfg.keys():
+        if not os.path.exists(os.path.join(args.output_path, k)):
+            logging.getLogger(__name__).info(
+                'Folder %s does not exist, skipping...',
+                os.path.join(args.output_path, k)
+            )
+            continue
         p = os.path.join(args.output_path, k, f'{dname}.time_stats.pkl')
         if os.path.exists(p):
             s = pickle.load(open(p, 'rb'))
@@ -208,6 +232,21 @@ def plot_statistics(args, time_stats=None, fnc_stats=None, class_legend=None):
         plt.xlabel('Time (s)')
         plt.ylabel('Test set objective')
     plt.savefig(os.path.join(args.output_path, f'{dname}.ObjFun.pdf'),
+                bbox_inches='tight')
+    plt.show()
+
+    # plot objective value with respect to iterations
+    for k, v, in fncs.items():
+        if class_legend is not None:
+            label = class_legend.get(k, k)
+        else:
+            label = k
+        plt.plot(v, label=label)
+        plt.legend()
+        plt.xlabel('Iteration')
+        plt.ylabel('Test set objective')
+    plt.gca().xaxis.set_major_locator(MaxNLocator(integer=True))
+    plt.savefig(os.path.join(args.output_path, f'{dname}.ObjFun2.pdf'),
                 bbox_inches='tight')
     plt.show()
 
