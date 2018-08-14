@@ -15,6 +15,7 @@ from sporco import common, cdict
 from sporco.dictlrn import dictlrn
 from sporco.admm import cbpdn
 from sporco.fista import fista
+import sporco_cuda.cbpdn as cucbpdn
 
 #  from dictlrn_slice import Pcn
 from utils import Pcn2 as Pcn
@@ -122,6 +123,7 @@ class OnlineDictLearnDenseSurrogate(
             'OCDL': {
                 'p': 1.,  # forgetting exponent
                 'DiminishingTol': False,  # diminishing tolerance for FISTA
+                'CUCBPDN': False,  # whether to use CUDA version of CBPDN
             }
         }
         defaults['CBPDN'].update({
@@ -186,9 +188,15 @@ class OnlineDictLearnDenseSurrogate(
 
         # Initialize with CBPDN
         self.timer.start('xstep')
-        xstep = cbpdn.ConvBPDN(self.getdict(), S, self.lmbda,
-                               opt=self.opt['CBPDN'])
-        xstep.solve()
+        copt = copy.deepcopy(self.opt['CBPDN'])
+        if self.opt['OCDL', 'CUCBPDN']:
+            X = cucbpdn.cbpdn(self.getdict(), S.squeeze(), self.lmbda, opt=copt)
+            X = np.asarray(X.reshape(self.cri.shpX), dtype=self.dtype)
+        else:
+            xstep = cbpdn.ConvBPDN(self.getdict(), S, self.lmbda, opt=copt)
+            xstep.solve()
+            X = np.asarray(xstep.getcoef().reshape(self.cri.shpX),
+                           dtype=self.dtype)
         self.timer.stop('xstep')
 
         X = np.asarray(xstep.getcoef().reshape(self.cri.shpX), dtype=self.dtype)
