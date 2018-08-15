@@ -221,7 +221,7 @@ class OnlineDictLearnSliceSurrogate(
                 'DiminishingTol': False,  # diminishing tolerance for FISTA
                 'CUCBPDN': False,  # use gpu version of cbpdn
                 'PARCBPDN': False,  # use parallel version of cbpdn
-                'nproc': 16,  # Number of process for parcbpdn
+                'nproc': None,  # Number of process for parcbpdn
             }
         }
         defaults['CBPDN'].update({

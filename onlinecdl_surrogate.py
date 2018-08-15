@@ -125,7 +125,7 @@ class OnlineDictLearnDenseSurrogate(
                 'DiminishingTol': False,  # diminishing tolerance for FISTA
                 'CUCBPDN': False,  # whether to use CUDA version of CBPDN
                 'PARCBPDN': False,
-                'nproc': 16,
+                'nproc': None,
             }
         }
         defaults['CBPDN'].update({
