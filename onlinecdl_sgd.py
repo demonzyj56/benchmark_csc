@@ -7,6 +7,7 @@
 # with the package.
 #
 # Code obtained from original SPORCO library (commit id: 44852c1).
+# Class name change: OnlineConvBPDNDictLearn -> OnlineDictLearnSGD
 # Modified by leoyolo 15/08/2018.
 
 """Online dictionary learning based on CBPDN sparse coding"""
@@ -16,6 +17,7 @@ from __future__ import absolute_import
 from builtins import range
 from builtins import object
 
+import pyfftw
 import copy
 import numpy as np
 from scipy import linalg
@@ -28,6 +30,7 @@ import sporco.cnvrep as cr
 from sporco.admm import cbpdn, parcbpdn
 from sporco.dictlrn import dictlrn
 from sporco_cuda import cbpdn as cucbpdn
+from sporco.dictlrn.onlinecdl import OnlineConvBPDNDictLearn
 
 
 __author__ = """\n""".join(['Cristina Garcia-Cardona <cgarciac@lanl.gov>',
@@ -35,13 +38,8 @@ __author__ = """\n""".join(['Cristina Garcia-Cardona <cgarciac@lanl.gov>',
 
 
 
-class OnlineConvBPDNDictLearn(common.IterativeSolver):
-    r"""**Class inheritance structure**
-
-    .. inheritance-diagram:: OnlineConvBPDNDictLearn
-       :parts: 2
-
-    |
+class OnlineDictLearnSGD(common.IterativeSolver):
+    r"""
 
     Stochastic gradient descent (SGD) based online convolutional
     dictionary learning, as proposed in :cite:`liu-2018-first`.
@@ -122,27 +120,29 @@ class OnlineConvBPDNDictLearn(common.IterativeSolver):
 
 
     def __new__(cls, *args, **kwargs):
-        """Create an OnlineConvBPDNDictLearn object and start its
+        """Create an OnlineDictLearnSGD object and start its
         initialisation timer."""
 
-        instance = super(OnlineConvBPDNDictLearn, cls).__new__(cls)
+        instance = super(OnlineDictLearnSGD, cls).__new__(cls)
         instance.timer = util.Timer(['init', 'solve', 'solve_wo_eval'])
         instance.timer.start('init')
         return instance
 
 
 
-    def __init__(self, D0, lmbda=None, opt=None, dimK=None, dimN=2):
-        """Initialise an OnlineConvBPDNDictLearn object with problem
+    def __init__(self, D0, S0=None, lmbda=None, opt=None, dimK=None, dimN=2):
+        """Initialise an OnlineDictLearnSGD object with problem
         size and options.
 
         Parameters
         ----------
         D0 : array_like
           Initial dictionary array
+        S0:
+          Dummy, keep to compatible with older code
         lmbda : float
           Regularisation parameter
-        opt : :class:`OnlineConvBPDNDictLearn.Options` object
+        opt : :class:`OnlineDictLearnSGD.Options` object
           Algorithm options
         dimK : 0, 1, or None, optional (default None)
           Number of signal dimensions in signal array passed to
@@ -154,10 +154,10 @@ class OnlineConvBPDNDictLearn(common.IterativeSolver):
         """
 
         if opt is None:
-            opt = OnlineConvBPDNDictLearn.Options()
-        if not isinstance(opt, OnlineConvBPDNDictLearn.Options):
+            opt = OnlineDictLearnSGD.Options()
+        if not isinstance(opt, OnlineDictLearnSGD.Options):
             raise TypeError('Parameter opt must be an instance of '
-                            'OnlineConvBPDNDictLearn.Options')
+                            'OnlineDictLearnSGD.Options')
         self.opt = opt
 
         if dimN != 2 and opt['CUDA_CBPDN']:
@@ -207,6 +207,7 @@ class OnlineConvBPDNDictLearn(common.IterativeSolver):
 
         # Configure status display
         self.display_config()
+        self.display_start()
 
 
 
@@ -257,8 +258,10 @@ class OnlineConvBPDNDictLearn(common.IterativeSolver):
                 if self.cri.K > 1:
                     raise ValueError('CUDA CBPDN solver can not be used with '
                                      'mini-batches')
-            self.Df = sl.pyfftw_byte_aligned(sl.rfftn(self.D, self.cri.Nv,
-                                                      self.cri.axisN))
+            #  self.Df = sl.pyfftw_byte_aligned(sl.rfftn(self.D, self.cri.Nv,
+            #                                            self.cri.axisN))
+            self.Df = pyfftw.byte_align(sl.rfftn(self.D, self.cri.Nv,
+                                                 self.cri.axisN))
             self.Gf = sl.pyfftw_empty_aligned(self.Df.shape, self.Df.dtype)
             self.Z = sl.pyfftw_empty_aligned(self.cri.shpX, self.dtype)
         else:
@@ -372,7 +375,9 @@ class OnlineConvBPDNDictLearn(common.IterativeSolver):
     def hdrtxt(cls):
         """Construct tuple of status display column title."""
 
-        return ('Itn', 'X r', 'X s', u('X ρ'), 'D cnstr', 'D dlt', u('D η'), 'Time')
+        #  return ('Itn', 'X r', 'X s', u('X ρ'), 'D cnstr', 'D dlt', u('D η'), 'Time')
+        return ('Itn', 'Fnc', 'DFid', 'l1', 'r_X', 's_X', u('ρ_X'),
+                'Cnstr_D', 'dlt_D', u('η_D'), 'Time')
 
 
 
@@ -382,9 +387,14 @@ class OnlineConvBPDNDictLearn(common.IterativeSolver):
         IterationStats entries.
         """
 
-        hdrmap = {'Itn': 'Iter', 'X r': 'PrimalRsdl', 'X s': 'DualRsdl',
-                  u('X ρ'): 'Rho', 'D cnstr': 'Cnstr', 'D dlt': 'DeltaD',
-                  u('D η'): 'Eta', 'Time': 'Time'}
+        #  hdrmap = {'Itn': 'Iter', 'X r': 'PrimalRsdl', 'X s': 'DualRsdl',
+        #            u('X ρ'): 'Rho', 'D cnstr': 'Cnstr', 'D dlt': 'DeltaD',
+        #            u('D η'): 'Eta', 'Time': 'Time'}
+        hdrmap = {'Itn': 'Iter', 'Fnc': 'ObjFun', 'DFid': 'DFid', 'l1': 'RegL1',
+                  'r_X': 'PrimalRsdl', 's_X': 'DualRsdl',
+                  u('ρ_X'): 'Rho', 'Cnstr_D': 'Cnstr', 'dlt_D': 'DeltaD',
+                  u('η_D'): 'Eta', 'Time': 'Time'}
+
         return hdrmap
 
 
@@ -483,6 +493,7 @@ class OnlineConvBPDNMaskDictLearn(OnlineConvBPDNDictLearn):
     dictionary learning with a spatial mask, as proposed in
     :cite:`liu-2018-first`.
     """
+    # TODO(leoyolo): inherit from OnlineDictLearnSGD.
 
     class Options(OnlineConvBPDNDictLearn.Options):
         r"""Online masked CBPDN dictionary learning algorithm options.

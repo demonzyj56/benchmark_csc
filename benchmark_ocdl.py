@@ -24,6 +24,7 @@ import torch
 import sporco.util as su
 import sporco.metric as sm
 from sporco.dictlrn.onlinecdl import OnlineConvBPDNDictLearn
+from onlinecdl_sgd import OnlineDictLearnSGD
 from fista_slice_online import OnlineDictLearnSliceSurrogate
 from onlinecdl_surrogate import OnlineDictLearnDenseSurrogate
 from sporco.dictlrn import prlcnscdl, cbpdndl

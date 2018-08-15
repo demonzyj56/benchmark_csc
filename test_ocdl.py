@@ -19,7 +19,7 @@ import torch
 import sporco.util as su
 import sporco.metric as sm
 import sporco.linalg as spl
-from sporco.admm import cbpdn
+from sporco.admm import cbpdn, parcbpdn
 import sporco_cuda.cbpdn as cucbpdn
 from utils import setup_logging
 from datasets import get_dataset, BlobLoader
