@@ -124,6 +124,8 @@ class OnlineDictLearnDenseSurrogate(
                 'p': 1.,  # forgetting exponent
                 'DiminishingTol': False,  # diminishing tolerance for FISTA
                 'CUCBPDN': False,  # whether to use CUDA version of CBPDN
+                'PARCBPDN': False,
+                'nproc': 16,
             }
         }
         defaults['CBPDN'].update({
@@ -191,6 +193,13 @@ class OnlineDictLearnDenseSurrogate(
         copt = copy.deepcopy(self.opt['CBPDN'])
         if self.opt['OCDL', 'CUCBPDN']:
             X = cucbpdn.cbpdn(self.getdict(), S.squeeze(), self.lmbda, opt=copt)
+            X = np.asarray(X.reshape(self.cri.shpX), dtype=self.dtype)
+        elif self.opt['OCDL', 'PARCBPDN']:
+            popt = parcbpdn.ParConvBPDN.Options(dict(self.opt['CBPDN']))
+            xstep = parcbpdn.ParConvBPDN(self.getdict(), S, self.lmbda,
+                                         opt=popt,
+                                         nproc=self.opt['OCDL', 'nproc'])
+            X = xstep.solve()
             X = np.asarray(X.reshape(self.cri.shpX), dtype=self.dtype)
         else:
             xstep = cbpdn.ConvBPDN(self.getdict(), S, self.lmbda, opt=copt)

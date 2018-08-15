@@ -13,6 +13,7 @@ from sporco.util import u
 from sporco import common, cdict
 from sporco.dictlrn import dictlrn
 from sporco.admm import cbpdn
+from sporco.admm import parcbpdn
 from sporco.fista import fista
 import sporco_cuda.cbpdn as cucbpdn
 import torch
@@ -219,6 +220,8 @@ class OnlineDictLearnSliceSurrogate(
                 'p': 1.,  # forgetting exponent
                 'DiminishingTol': False,  # diminishing tolerance for FISTA
                 'CUCBPDN': False,  # use gpu version of cbpdn
+                'PARCBPDN': False,  # use parallel version of cbpdn
+                'nproc': 16,  # Number of process for parcbpdn
             }
         }
         defaults['CBPDN'].update({
@@ -316,6 +319,13 @@ class OnlineDictLearnSliceSurrogate(
         copt = copy.deepcopy(self.opt['CBPDN'])
         if self.opt['OCDL', 'CUCBPDN']:
             X = cucbpdn.cbpdn(self.getdict(), S.squeeze(), self.lmbda, opt=copt)
+            X = np.asarray(X.reshape(self.cri.shpX), dtype=self.dtype)
+        elif self.opt['OCDL', 'PARCBPDN']:
+            popt = parcbpdn.ParConvBPDN.Options(dict(self.opt['CBPDN']))
+            xstep = parcbpdn.ParConvBPDN(self.getdict(), S, self.lmbda,
+                                         opt=popt,
+                                         nproc=self.opt['OCDL', 'nproc'])
+            X = xstep.solve()
             X = np.asarray(X.reshape(self.cri.shpX), dtype=self.dtype)
         else:
             xstep = cbpdn.ConvBPDN(self.getdict(), S, self.lmbda, opt=copt)
