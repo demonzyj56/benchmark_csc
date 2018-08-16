@@ -10,7 +10,7 @@ class VGG17Flowers(data.Dataset):
     """VGG 17Flowers dataset."""
 
     def __init__(self, root, train=True, dtype=np.float32, scaled=True,
-                 gray=False):
+                 gray=False, dsize=None):
         with open(os.path.join(root, 'files.txt'), 'r') as f:
             lines = [l.strip() for l in f.readlines()]
             allfiles = [os.path.join(root, l) for l in lines]
@@ -25,6 +25,7 @@ class VGG17Flowers(data.Dataset):
         self.dtype = dtype
         self.scaled = scaled
         self.gray = gray
+        self.dsize = dsize if dsize is not None else (256, 256)
 
     def __len__(self):
         return len(self.files)
@@ -37,7 +38,7 @@ class VGG17Flowers(data.Dataset):
         else:
             image = cv2.imread(path, cv2.IMREAD_COLOR)
             image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-        image = cv2.resize(image, dsize=(500, 500))
+        image = cv2.resize(image, dsize=self.dsize)
         image = image.astype(self.dtype)
         if self.scaled and not np.issubdtype(image.dtype, np.integer):
             image /= 255.
@@ -48,7 +49,7 @@ class VGG102Flowers(data.Dataset):
     """VGG 102Flowers dataset."""
 
     def __init__(self, root, train=True, dtype=np.float32, scaled=True,
-                 gray=False):
+                 gray=False, dsize=None):
         allfiles = filter(lambda s: s.endswith('jpg'), os.listdir(root))
         allfiles = [os.path.join(root, f) for f in allfiles]
         assert all([os.path.exists(f) for f in allfiles])
@@ -62,6 +63,7 @@ class VGG102Flowers(data.Dataset):
         self.dtype = dtype
         self.scaled = scaled
         self.gray = gray
+        self.dsize = dsize if dsize is not None else (256, 256)
 
     def __len__(self):
         return len(self.files)
@@ -73,7 +75,7 @@ class VGG102Flowers(data.Dataset):
         else:
             image = cv2.imread(path, cv2.IMREAD_COLOR)
             image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-        image = cv2.resize(image, dsize=(500, 500))
+        image = cv2.resize(image, dsize=self.dsize)
         image = image.astype(self.dtype)
         if self.scaled and not np.issubdtype(image.dtype, np.integer):
             image /= 255.

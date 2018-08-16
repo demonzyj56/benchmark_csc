@@ -56,7 +56,9 @@ def parse_args():
 
 def train_models(D0, solvers, train_blob, args):
     """Function for training every solvers."""
-    loader = BlobLoader(train_blob, args.epochs, args.batch_size)
+    epochs = args.epochs if args.epochs > 0 else None
+    batch_size = args.batch_size if args.batch_size > 0 else None
+    loader = BlobLoader(train_blob, epochs, batch_size)
     sample = loader.random_sample()
     solvers = {k: sol_name(D0, sample, args.lmbda, opt=opt) for
                k, (sol_name, opt) in solvers.items()}
@@ -218,10 +220,10 @@ def main():
 
     if args.use_gray:
         D0 = np.random.randn(args.patch_size, args.patch_size, args.num_atoms).astype(np.float32)
-        D0[..., 0] = np.ones((args.patch_size, args.patch_size), dtype=np.float32)/(args.patch_size**2)
     else:
         D0 = np.random.randn(args.patch_size, args.patch_size, 3, args.num_atoms).astype(np.float32)
-        D0[..., 0] = np.ones((args.patch_size, args.patch_size, 3), dtype=np.float32)/(3*args.patch_size**2)
+    if args.no_tikhonov_filter:
+        D0[..., 0] = 1./D0[..., 0].size  # uniform value
 
     # train solvers
     solvers = train_models(D0, solvers, train_blob, args)
