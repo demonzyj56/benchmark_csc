@@ -185,6 +185,8 @@ def main():
     if args.rng_seed >= 0:
         np.random.seed(args.rng_seed)
         torch.manual_seed(args.rng_seed)
+    else:
+        np.random.seed(None)
 
     # load configs
     cfg = yaml.load(open(args.cfg, 'r'))
