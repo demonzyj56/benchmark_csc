@@ -125,15 +125,6 @@ def plot_and_save_statistics(solvers, args):
     """Plot some desired statistics."""
     dname = args.dataset if not args.use_gray else args.dataset+'.gray'
     for k, v in solvers.items():
-        # save dictionaries visualization
-        plt.clf()
-        d = v.getdict().squeeze()
-        if d.ndim == 3:  # grayscale image
-            plt.imshow(su.tiledict(d), cmap='gray')
-        else:
-            plt.imshow(su.tiledict(d))
-        plt.savefig(os.path.join(args.output_path, k, f'{dname}.pdf'),
-                    bbox_inches='tight')
         # save statistics
         stats_arr = su.ntpl2array(v.getitstat())
         np.save(os.path.join(args.output_path, k, f'{dname}.stats.npy'),
@@ -145,6 +136,15 @@ def plot_and_save_statistics(solvers, args):
             open(os.path.join(args.output_path, k,
                               f'{dname}.time_stats.pkl'), 'wb')
         )
+        # save dictionaries visualization
+        plt.clf()
+        d = v.getdict().squeeze()
+        if d.ndim == 3:  # grayscale image
+            plt.imshow(su.tiledict(d), cmap='gray')
+        else:
+            plt.imshow(su.tiledict(d))
+        plt.savefig(os.path.join(args.output_path, k, f'{dname}.pdf'),
+                    bbox_inches='tight')
     if 1:
         plt.clf()
         nsol = len(solvers)
