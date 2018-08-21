@@ -2,6 +2,7 @@
 # -*- coding: utf-8 -*-
 """Test script for CIFAR10."""
 import argparse
+import copy
 import datetime
 import pprint
 import os
@@ -33,6 +34,7 @@ def parse_args():
     parser.add_argument('--last_only', action='store_true', help='Only compute the statistics from last epoch')
     parser.add_argument('--pad_boundary', action='store_true', help='Pad the boundary of test_blob with zeros')
     parser.add_argument('--num_test', default=-1, type=int, help='Number of test samples; negative values mean use all')
+    parser.add_argument('--no_legacy', action='store_true', help='Prevent using legacy code')
     return parser.parse_args()
 
 
@@ -73,8 +75,20 @@ def main():
         test_blob = test_blob[..., selected]
 
     Dd = load_dict(args)
+    if not args.no_legacy:
+        if 'OnlineDictLearnDenseSurrogate' in Dd.keys() and \
+                'OnlineDictLearnSliceSurrogate' in Dd.keys():
+            del Dd['OnlineDictLearnDenseSurrogate']
+            remove_duplicate_computation = True
+        else:
+            remove_duplicate_computation = False
 
     fnc_stats = get_stats_from_dict(Dd, args, test_blob)
+
+    if not args.no_legacy and remove_duplicate_computation:
+        fnc_stats.update({
+            'OnlineDictLearnDenseSurrogate': copy.deepcopy(fnc_stats['OnlineDictLearnSliceSurrogate'])
+        })
 
     # load time statistics
     time_stats = load_time_stats(args)
