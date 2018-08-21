@@ -9,6 +9,10 @@
 # Code obtained from original SPORCO library (commit id: 44852c1).
 # Class name change: OnlineConvBPDNDictLearn -> OnlineDictLearnSGD
 # Modified by leoyolo 15/08/2018.
+#
+# Class name change: OnlineConvBPDNMaskDictLearn -> OnlineDictLearnSGDMask
+# Inherit now from OnlineDictLearnSGD.
+# Modified by leoyolo 18/08/2018.
 
 """Online dictionary learning based on CBPDN sparse coding"""
 
@@ -30,7 +34,6 @@ import sporco.cnvrep as cr
 from sporco.admm import cbpdn, parcbpdn
 from sporco.dictlrn import dictlrn
 from sporco_cuda import cbpdn as cucbpdn
-from sporco.dictlrn.onlinecdl import OnlineConvBPDNDictLearn
 
 
 __author__ = """\n""".join(['Cristina Garcia-Cardona <cgarciac@lanl.gov>',
@@ -162,9 +165,6 @@ class OnlineDictLearnSGD(common.IterativeSolver):
 
         if dimN != 2 and opt['CUDA_CBPDN']:
             raise ValueError('CUDA CBPDN solver can only be used when dimN=2')
-
-        if opt['CUDA_CBPDN'] and cuda.device_count() == 0:
-            raise ValueError('SPORCO-CUDA not installed or no GPU available')
 
         self.dimK = dimK
         self.dimN = dimN
@@ -481,30 +481,23 @@ class OnlineDictLearnSGD(common.IterativeSolver):
 
 
 
-class OnlineConvBPDNMaskDictLearn(OnlineConvBPDNDictLearn):
-    r"""**Class inheritance structure**
-
-    .. inheritance-diagram:: OnlineConvBPDNMaskDictLearn
-       :parts: 2
-
-    |
-
+class OnlineDictLearnSGDMask(OnlineDictLearnSGD):
+    r"""
     Stochastic gradient descent (SGD) based online convolutional
     dictionary learning with a spatial mask, as proposed in
     :cite:`liu-2018-first`.
     """
-    # TODO(leoyolo): inherit from OnlineDictLearnSGD.
 
-    class Options(OnlineConvBPDNDictLearn.Options):
+    class Options(OnlineDictLearnSGD.Options):
         r"""Online masked CBPDN dictionary learning algorithm options.
 
         Options are the same as those of
-        :class:`OnlineConvBPDNDictLearn.Options`, except for
+        :class:`OnlineDictLearnSGD.Options`, except for
 
           ``CBPDN`` : Options :class:`.admm.cbpdn.ConvBPDNMaskDcpl.Options`.
         """
 
-        defaults = copy.deepcopy(OnlineConvBPDNDictLearn.Options.defaults)
+        defaults = copy.deepcopy(OnlineDictLearnSGD.Options.defaults)
         defaults.update({'CBPDN': copy.deepcopy(
                          cbpdn.ConvBPDNMaskDcpl.Options.defaults)})
 
@@ -514,7 +507,7 @@ class OnlineConvBPDNMaskDictLearn(OnlineConvBPDNDictLearn):
             algorithm options.
             """
 
-            OnlineConvBPDNDictLearn.Options.__init__(self, {
+            OnlineDictLearnSGD.Options.__init__(self, {
                 'CBPDN': cbpdn.ConvBPDNMaskDcpl.Options({
                     'AutoRho': {'Period': 10, 'AutoScaling': False,
                     'RsdlRatio': 10.0, 'Scaling': 2.0, 'RsdlTarget': 1.0}})
