@@ -18,8 +18,8 @@ from sporco.fista import fista
 import sporco_cuda.cbpdn as cucbpdn
 import torch
 
-#  from dictlrn_slice import Pcn
-from utils import Pcn2 as Pcn
+from dictlrn_slice import Pcn
+#  from utils import Pcn2 as Pcn
 from im2slices import im2slices, slices2im
 
 logger = logging.getLogger(__name__)
@@ -33,6 +33,15 @@ def einsum(subscripts, operands):
         operands = [torch.from_numpy(o) for o in operands]
         out = torch.einsum(subscripts, operands).numpy()
     return out
+
+
+def reconstruct_additive_component(ams):
+    """Get the reconstructed component from ams."""
+    Xn = ams.cbpdn.Y[ams.index_addmsk()]
+    Dnf = ams.cbpdn.Df[ams.index_addmsk()]
+    Xnf = sl.rfftn(Xn, None, ams.cri.axisN)
+    Sf = np.sum(Dnf * Xnf, axis=ams.cri.axisM)
+    return sl.irfftn(Sf, ams.cri.Nv, ams.cri.axisN).squeeze()
 
 
 class IterStatsConfig(object):
@@ -304,8 +313,8 @@ class OnlineDictLearnSliceSurrogate(
         if self.opt['Verbose'] and self.opt['StatusHeader']:
             self.isc.printheader()
 
-    def solve(self, S):
-        """Solve for given signal S."""
+    def solve(self, S, W=None):
+        """Solve for given signal S, optionally with mask W."""
         self.cri = cr.CSC_ConvRepIndexing(
             self.D.squeeze()[:, :, None, None, ...],
             S[:, :, None, None, ...],
@@ -328,10 +337,20 @@ class OnlineDictLearnSliceSurrogate(
             X = xstep.solve()
             X = np.asarray(X.reshape(self.cri.shpX), dtype=self.dtype)
         else:
-            xstep = cbpdn.ConvBPDN(self.getdict(), S, self.lmbda, opt=copt)
-            xstep.solve()
-            X = np.asarray(xstep.getcoef().reshape(self.cri.shpX),
-                           dtype=self.dtype)
+            if W is None:
+                xstep = cbpdn.ConvBPDN(self.getdict(), S, self.lmbda, opt=copt)
+                xstep.solve()
+                X = np.asarray(xstep.getcoef().reshape(self.cri.shpX),
+                               dtype=self.dtype)
+            else:
+                xstep = cbpdn.AddMaskSim(cbpdn.ConvBPDN, self.getdict(), S, W,
+                                         self.lmbda, opt=copt)
+                X = xstep.solve()
+                X = np.asarray(X.reshape(self.cri.shpX), dtype=self.dtype)
+                # The additive component is removed from masked signal
+                add_cpnt = reconstruct_additive_component(xstep)
+                S -= add_cpnt.reshape(S.shape)
+
         self.timer.stop('xstep')
 
         # update At and Bt
