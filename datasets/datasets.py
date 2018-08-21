@@ -5,6 +5,7 @@ import scipy.io as sio
 from .cifar import CIFAR10
 from .image_dataset import create_image_blob
 from .flower import VGG17Flowers, VGG102Flowers
+from .voc07 import VOC07Images
 
 
 __ROOT = osp.join(osp.dirname(__file__), '..')
@@ -54,6 +55,12 @@ def get_dataset(name, root=None, train=True, dtype=np.float32, scaled=True,
             root = osp.join(__ROOT, '.102flowers')
         dataset = VGG102Flowers(root=root, train=train, dtype=dtype,
                                 scaled=scaled, gray=gray)
+        return dataset
+    elif name == 'voc07':
+        if root is None:
+            root = osp.join(__ROOT, '.VOCdevkit')
+        dataset = VOC07Images(root=root, train=train, dtype=dtype,
+                              scaled=scaled, gray=gray)
         return dataset
     else:
         raise KeyError('Unknown dataset: {}'.format(name))
