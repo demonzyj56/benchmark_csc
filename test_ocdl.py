@@ -156,7 +156,11 @@ def get_stats_from_dict_gpu(Dd, args, test_blob):
 
 def load_dict(args):
     """Load dictionaries from output path."""
-    dname = args.dataset if not args.use_gray else args.dataset+r'\.gray'
+    #  dname = args.dataset if not args.use_gray else args.dataset+r'\.gray'
+    # NOTE: hack, to support the case where train/test datasets are different.
+    dname = getattr(args, 'dname', args.dataset)
+    if args.use_gray:
+        dname = dname + r'\.gray'
     cfg = yaml.load(open(args.cfg, 'r'))
     del cfg['ConvBPDN']
     Dd = {}
@@ -183,7 +187,11 @@ def load_dict(args):
 
 def load_time_stats(args):
     """Load time statistics from output path."""
-    dname = args.dataset if not args.use_gray else args.dataset+'.gray'
+    #  dname = args.dataset if not args.use_gray else args.dataset+'.gray'
+    # NOTE: hack, to support the case where train/test datasets are different.
+    dname = getattr(args, 'dname', args.dataset)
+    if args.use_gray:
+        dname = dname + '.gray'
     cfg = yaml.load(open(args.cfg, 'r'))
     del cfg['ConvBPDN']
     time_stats = {}
@@ -208,7 +216,11 @@ def load_time_stats(args):
 
 def plot_statistics(args, time_stats=None, fnc_stats=None, class_legend=None):
     """Plot obtained statistics."""
-    dname = args.dataset if not args.use_gray else args.dataset+'.gray'
+    #  dname = args.dataset if not args.use_gray else args.dataset+'.gray'
+    # NOTE: hack, to support the case where train/test datasets are different.
+    dname = getattr(args, 'dname', args.dataset)
+    if args.use_gray:
+        dname = dname + '.gray'
     if time_stats is None:
         time_stats = load_time_stats(args)
     if fnc_stats is None:
