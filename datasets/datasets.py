@@ -3,7 +3,7 @@ import os.path as osp
 import numpy as np
 import scipy.io as sio
 from .cifar import CIFAR10
-from .image_dataset import create_image_blob
+from .image_dataset import create_image_blob, get_image_items
 from .flower import VGG17Flowers, VGG102Flowers
 from .voc07 import VOC07Images
 
@@ -62,5 +62,13 @@ def get_dataset(name, root=None, train=True, dtype=np.float32, scaled=True,
         dataset = VOC07Images(root=root, train=train, dtype=dtype,
                               scaled=scaled, gray=gray)
         return dataset
+    elif name == 'test_images':
+        # load a batch of images for testing
+        imgs = [create_image_blob(n, dtype, scaled=scaled, gray=False, dsize=(256, 256)).squeeze()
+                for n in ('barbara', 'house', 'peppers', 'mandrill', 'monarch')]
+        return np.stack(imgs, axis=-1)
+    elif name in get_image_items().keys():
+        # Keep the last singleton dimension
+        return create_image_blob(name, dtype, scaled=scaled, gray=False, dsize=(256, 256))
     else:
         raise KeyError('Unknown dataset: {}'.format(name))

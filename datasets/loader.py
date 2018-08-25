@@ -44,6 +44,9 @@ class BlobLoader(object):
         else:
             raise StopIteration
 
+    def __len__(self):
+        return self.epochs
+
     def _get_next_minibatch(self):
         """Return the desired minibatch."""
         if isinstance(self.dataset, data.Dataset):

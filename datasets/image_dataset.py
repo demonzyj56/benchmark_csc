@@ -10,7 +10,7 @@ logger = logging.getLogger(__name__)
 __THIS_DIR = os.path.dirname(__file__)
 
 
-def load_image(filename, dtype=np.float32, scaled=True, gray=False):
+def load_image(filename, dtype=np.float32, scaled=True, gray=False, dsize=None):
     """Load image from filename.
 
     Parameters
@@ -25,6 +25,8 @@ def load_image(filename, dtype=np.float32, scaled=True, gray=False):
         for floating data type.
     gray: boolean
         If True, then the image is converted to single channel grayscale image.
+    dsize: tuple or None
+        If not None, then the image is rescaled to this shape.
 
     Returns
     -------
@@ -46,10 +48,13 @@ def load_image(filename, dtype=np.float32, scaled=True, gray=False):
         )
     if gray:
         image = cv2.imread(filename, cv2.IMREAD_GRAYSCALE)
-        image = np.expand_dims(image, axis=-1)
     else:
         image = cv2.imread(filename, cv2.IMREAD_COLOR)
         image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+    if dsize is not None:
+        image = cv2.resize(image, dsize=dsize)
+    if gray:
+        image = np.expand_dims(image, axis=-1)
     image = image.astype(dtype)
     if scaled and not np.issubdtype(image.dtype, np.integer):
         image /= 255.
@@ -84,14 +89,15 @@ def get_image_items():
     return __image_list
 
 
-def create_image_blob(name, dtype=np.float32, scaled=True, gray=False):
+def create_image_blob(name, dtype=np.float32, scaled=True, gray=False,
+                      dsize=None):
     """Create a 4-D image blob from a valid image name.
 
     Parameters
     ----------
     name: string
         The name of image or image list.
-    dtype, scaled, gray
+    dtype, scaled, gray, dsize
         Refer to `image_dataset.load_image` for more details.
 
     Returns
@@ -103,5 +109,5 @@ def create_image_blob(name, dtype=np.float32, scaled=True, gray=False):
     img_list = __image_list[name]
     if not isinstance(img_list, list):
         img_list = [img_list]
-    imgs = [load_image(img, dtype, scaled, gray) for img in img_list]
+    imgs = [load_image(img, dtype, scaled, gray, dsize) for img in img_list]
     return np.stack(imgs, axis=-1)
