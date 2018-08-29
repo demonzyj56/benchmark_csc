@@ -51,6 +51,7 @@ def parse_args():
     parser.add_argument('--visdom', default=None, help='Whether should setup a visdom server')
     parser.add_argument('--batch_model', action='store_true', help='Optionally train the batch dictlrn model')
     parser.add_argument('--no_legacy', action='store_true', help='Remove personal legacy code for research use')
+    parser.add_argument('--batch_max_samples', default=-1, type=int, help='Maximum number of train samples for batch model')
     return parser.parse_args()
 
 
@@ -98,9 +99,12 @@ def train_batch_model(D0, train_blob, opt, args):
     if os.path.exists(os.path.join(args.output_path, 'iter_record.mat')):
         iter_record = sio.loadmat(os.path.join(args.output_path, 'iter_record.mat'))['iter_record']
         selected = list(set(iter_record.ravel().tolist()))
+        if args.batch_max_samples > 0 and args.batch_max_samples < len(selected):
+            selected = selected[:args.batch_max_samples]
         if len(selected) < train_blob.shape[-1]:
+            logger.info('Selected %d -> %d train samples for training batch model',
+                        strain_blob.shape[-1], len(selected))
             train_blob = train_blob[..., selected]
-            logger.info('Selected %d -> %d train samples for training batch model')
     if not args.no_tikhonov_filter:
         # fix lambda to be 5
         _, train_blob = su.tikhonov_filter(train_blob, 5.)
