@@ -103,7 +103,7 @@ def train_batch_model(D0, train_blob, opt, args):
             selected = selected[:args.batch_max_samples]
         if len(selected) < train_blob.shape[-1]:
             logger.info('Selected %d -> %d train samples for training batch model',
-                        strain_blob.shape[-1], len(selected))
+                        train_blob.shape[-1], len(selected))
             train_blob = train_blob[..., selected]
     if not args.no_tikhonov_filter:
         # fix lambda to be 5
