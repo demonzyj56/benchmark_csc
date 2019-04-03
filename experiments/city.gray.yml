@@ -1,0 +1,129 @@
+OnlineDictLearnDenseSurrogate:
+    Verbose: True
+    AccurateDFid: True
+    IterTimer: solve_wo_eval
+    CBPDN:
+        HighMemSolve: True
+        rho: 10.
+        RelaxParam: 1.8
+        AbsStopTol: 0.001
+        RelStopTol: 0.001
+        MaxMainIter: 100
+        FastSolve: False
+        AutoRho:
+            Enabled: True
+            AutoScaling: False
+            Scaling: 2.
+            RsdlRatio: 10.
+    CCMOD:
+        Verbose: False
+        FastSolve: False
+        # L: 150.
+        # L: 200.
+        L: 250.
+        MaxMainIter: 100
+        RelStopTol: 0.01
+        ZeroMean: False
+        BackTrack:
+            Enabled: False
+        AutoStop:
+            Enabled: False
+    OCDL:
+        p: 5.
+        DiminishingTol: True
+        CUCBPDN: False
+
+OnlineDictLearnSliceSurrogate:
+    Verbose: True
+    AccurateDFid: True
+    IterTimer: solve_wo_eval
+    CBPDN:
+        HighMemSolve: True
+        rho: 10.
+        RelaxParam: 1.8
+        AbsStopTol: 0.001
+        RelStopTol: 0.001
+        MaxMainIter: 100
+        FastSolve: False
+        AutoRho:
+            Enabled: True
+            AutoScaling: False
+            Scaling: 2.
+            RsdlRatio: 10.
+    CCMOD:
+        Verbose: False
+        FastSolve: False
+        L: 250
+        MaxMainIter: 100
+        RelStopTol: 0.01
+        ZeroMean: False
+        BackTrack:
+            Enabled: False
+        AutoStop:
+            Enabled: False
+    OCDL:
+        p: 5.
+        # p: 10.
+        DiminishingTol: True
+        CUCBPDN: False
+
+OnlineConvBPDNDictLearn:
+    Verbose: True
+    AccurateDFid: True
+    IterTimer: solve_wo_eval
+    CBPDN:
+        HighMemSolve: True
+        rho: 10.
+        RelaxParam: 1.8
+        AbsStopTol: 0.001
+        RelStopTol: 0.001
+        MaxMainIter: 100
+        FastSolve: False
+        AutoRho:
+            # Enabled: False
+            Enabled: True
+            AutoScaling: False
+            Scaling: 2.
+            RsdlRatio: 10.
+    OCDL:
+        ZeroMean: False
+        eta_a: 1.
+        eta_b: 10.
+
+ConvBPDNDictLearn:
+    Verbose: True
+    AccurateDFid: True
+    MaxMainIter: 30
+    IterTimer: solve_wo_eval
+    CBPDN:
+        HighMemSolve: True
+        rho: 10.
+        RelaxParam: 1.8
+        AbsStopTol: 0.001
+        RelStopTol: 0.001
+        MaxMainIter: 100
+        FastSolve: False
+        AutoRho:
+            # Enabled: False
+            Enabled: True
+            AutoScaling: False
+            Scaling: 2.
+            RsdlRatio: 10.
+    CCMOD:
+        FastSolve: False
+        MaxMainIter: 100
+        ZeroMean: False
+        AbsStopTol: 0.001
+        RelStopTol: 0.001
+        rho: 10
+        AutoRho:
+            Enabled: False
+
+ConvBPDN:
+    Verbose: False
+    MaxMainIter: 100
+    AbsStopTol: 0.001
+    RelStopTol: 0.001
+    AuxVarObj: False
+    AutoRho:
+        Enabled: False

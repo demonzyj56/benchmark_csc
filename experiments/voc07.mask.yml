@@ -1,0 +1,62 @@
+OnlineDictLearnSliceSurrogate:
+    Verbose: True
+    AccurateDFid: True
+    IterTimer: solve_wo_eval
+    CBPDN:
+        RelaxParam: 1.8
+        HighMemSolve: True
+        # AbsStopTol: 0.001
+        # RelStopTol: 0.001
+        RelStopTol: 0.001
+        MaxMainIter: 100
+        FastSolve: False
+        AutoRho:
+            Enabled: False
+    CCMOD:
+        Verbose: False
+        FastSolve: False
+        L: 10.
+        MaxMainIter: 100
+        RelStopTol: 0.001
+        ZeroMean: False
+        BackTrack:
+            Enabled: False
+        AutoStop:
+            Enabled: False
+    OCDL:
+        p: 10.
+        DiminishingTol: False
+        CUCBPDN: False
+ 
+OnlineDictLearnSGDMask:
+    Verbose: True
+    IterTimer: solve_wo_eval
+    CBPDN:
+        RelaxParam: 1.8
+        HighMemSolve: True
+        RelStopTol: 0.001
+        MaxMainIter: 100
+        FastSolve: False
+        AutoRho:
+            Enabled: False
+    ZeroMean: False
+    eta_a: 10.
+    eta_b: 5.
+    CUDA_CBPDN: False
+
+# ConvBPDNMaskDictLearn:
+#     Verbose: True
+#     MaxMainIter: 100
+#     AccurateDFid: True
+#     CBPDN:
+#         rho: 100.
+
+ConvBPDN:
+    RelaxParam: 1.8
+    HighMemSolve: True
+    Verbose: False
+    MaxMainIter: 100
+    RelStopTol: 0.005
+    AuxVarObj: False
+    AutoRho:
+        Enabled: False
