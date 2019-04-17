@@ -67,6 +67,11 @@ def get_dataset(name, root=None, train=True, dtype=np.float32, scaled=True,
         imgs = [create_image_blob(n, dtype, scaled=scaled, gray=False, dsize=(256, 256)).squeeze()
                 for n in ('barbara', 'house', 'peppers', 'mandrill', 'monarch')]
         return np.stack(imgs, axis=-1)
+    elif name == 'test_images_rev':
+        imgs = [create_image_blob(n, dtype, scaled=scaled, gray=False, dsize=(256, 256)).squeeze()
+                for n in ('barbara', 'house', 'peppers', 'mandrill', 'monarch',
+                          'f16', 'parrots', 'boy', 'tulips', 'kangaroo')]
+        return np.stack(imgs, axis=-1)
     elif name in get_image_items().keys():
         # Keep the last singleton dimension
         return create_image_blob(name, dtype, scaled=scaled, gray=False, dsize=(256, 256))
